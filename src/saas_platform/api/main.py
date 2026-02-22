@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 
 from saas_platform.adapters.foundry import FoundryAgentGateway
 from saas_platform.adapters.storage import (
@@ -31,7 +31,7 @@ from saas_platform.domain.models import (
     UpdateTenantPlanRequest,
     UsageEvent,
 )
-from saas_platform.policies.auth import TenantAuthService, tenant_headers
+from saas_platform.policies.auth import AdminAuthService, AdminPrincipal, TenantAuthService, tenant_headers
 from saas_platform.policies.quota import QuotaCounter, QuotaPolicy, allow_request
 from saas_platform.policies.rate_limit import FixedWindowRateLimiter
 from saas_platform.provisioning.worker import process_next_job
@@ -46,6 +46,7 @@ class AppContext:
     queue: ProvisioningQueue
     usage: UsageMeter
     auth: TenantAuthService
+    admin_auth: AdminAuthService
     limiter: FixedWindowRateLimiter
     gateway: FoundryAgentGateway
 
@@ -132,6 +133,7 @@ def _build_context(settings: Settings) -> AppContext:
         queue=queue,
         usage=usage,
         auth=TenantAuthService(settings),
+        admin_auth=AdminAuthService(settings),
         limiter=FixedWindowRateLimiter(settings.default_rate_limit_rpm),
         gateway=FoundryAgentGateway(settings),
     )
@@ -144,12 +146,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Hosted Agents SaaS Platform", version="0.2.0")
     app.state.ctx = ctx
 
+    def _authorize_admin(
+        *,
+        authorization: str,
+        required_roles: set[str] | None = None,
+        required_scopes: set[str] | None = None,
+        tenant_id: str | None = None,
+    ) -> AdminPrincipal:
+        principal = ctx.admin_auth.authenticate(authorization=authorization)
+        ctx.admin_auth.authorize(
+            principal=principal,
+            required_roles=required_roles,
+            required_scopes=required_scopes,
+            tenant_id=tenant_id,
+        )
+        return principal
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/v1/admin/debug/identity")
-    def debug_identity() -> dict[str, str | bool]:
+    def debug_identity(
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> dict[str, str | bool]:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin"},
+            required_scopes={"admin.identity.read"},
+        )
         return {
             "foundry_auth_mode": ctx.gateway.auth_mode,
             "azure_use_managed_identity": ctx.settings.azure_use_managed_identity,
@@ -158,18 +183,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/v1/admin/plans", response_model=list[Plan])
-    def list_plans() -> list[Plan]:
+    def list_plans(
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> list[Plan]:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin"},
+            required_scopes={"plans.read"},
+        )
         return ctx.plans.list_plans()
 
     @app.get("/v1/admin/plans/{plan_id}", response_model=Plan)
-    def get_plan(plan_id: str) -> Plan:
+    def get_plan(
+        plan_id: str,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> Plan:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin"},
+            required_scopes={"plans.read"},
+        )
         plan = ctx.plans.get_plan(plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="plan not found")
         return plan
 
     @app.post("/v1/admin/plans", response_model=Plan, status_code=201)
-    def upsert_plan(request: CreatePlanRequest) -> Plan:
+    def upsert_plan(
+        request: CreatePlanRequest,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> Plan:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin"},
+            required_scopes={"plans.write"},
+        )
         plan = Plan(
             plan_id=request.plan_id,
             display_name=request.display_name,
@@ -205,7 +253,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return tenant.model_dump(mode="json")
 
     @app.patch("/v1/admin/tenants/{tenant_id}/plan")
-    def update_tenant_plan(tenant_id: str, request: UpdateTenantPlanRequest) -> dict:
+    def update_tenant_plan(
+        tenant_id: str,
+        request: UpdateTenantPlanRequest,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> dict:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.plan.write"},
+            tenant_id=tenant_id,
+        )
         tenant = ctx.catalog.get_tenant(tenant_id)
         if tenant is None:
             raise HTTPException(status_code=404, detail="tenant not found")
@@ -219,7 +277,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return tenant.model_dump(mode="json")
 
     @app.get("/v1/admin/tenants/{tenant_id}/usage", response_model=TenantUsageSummary)
-    def tenant_usage(tenant_id: str, month: str | None = None) -> TenantUsageSummary:
+    def tenant_usage(
+        tenant_id: str,
+        month: str | None = None,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> TenantUsageSummary:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin", "billing_reader"},
+            required_scopes={"tenant.usage.read", "billing.read"},
+            tenant_id=tenant_id,
+        )
         tenant = ctx.catalog.get_tenant(tenant_id)
         if tenant is None:
             raise HTTPException(status_code=404, detail="tenant not found")
@@ -227,7 +295,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ctx.usage.summarize_tenant_month(tenant_id=tenant_id, month=normalized_month)
 
     @app.get("/v1/admin/usage/export", response_model=list[TenantBillingRecord])
-    def export_usage(month: str | None = None) -> list[TenantBillingRecord]:
+    def export_usage(
+        month: str | None = None,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> list[TenantBillingRecord]:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "billing_reader"},
+            required_scopes={"usage.export", "billing.read"},
+        )
         normalized_month = _normalize_month(month)
         return ctx.usage.summarize_all_tenants_month(month=normalized_month)
 

@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import jwt
 
 from saas_platform.api.main import create_app
 from saas_platform.config import Settings
@@ -22,6 +23,25 @@ def _settings(**overrides) -> Settings:
         default_rate_limit_rpm=2,
     )
     return Settings(**{**base.__dict__, **overrides})
+
+
+def _admin_headers(
+    *,
+    secret: str,
+    roles: list[str] | None = None,
+    scopes: list[str] | None = None,
+    tenant_ids: list[str] | None = None,
+) -> dict[str, str]:
+    claims: dict[str, object] = {"sub": "admin-user"}
+    if roles:
+        claims["roles"] = roles
+    if scopes:
+        claims["scp"] = " ".join(scopes)
+    if tenant_ids:
+        claims["tenant_ids"] = tenant_ids
+
+    token = jwt.encode(claims, secret, algorithm="HS256")
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_tenant_provisioning_and_run_flow() -> None:
@@ -96,10 +116,14 @@ def test_api_key_auth_and_rate_limit() -> None:
 
 
 def test_identity_debug_endpoint_prefers_managed_identity() -> None:
-    app = create_app(_settings())
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(_settings(jwt_shared_secret=secret))
     client = TestClient(app)
 
-    response = client.get("/v1/admin/debug/identity")
+    response = client.get(
+        "/v1/admin/debug/identity",
+        headers=_admin_headers(secret=secret, roles=["platform_admin"]),
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["foundry_auth_mode"] == "managed_identity"
@@ -107,14 +131,17 @@ def test_identity_debug_endpoint_prefers_managed_identity() -> None:
 
 
 def test_plan_admin_and_tenant_quota_enforcement() -> None:
+    secret = "admin-secret-1234567890-1234567890"
     app = create_app(
         _settings(
             allow_api_key_fallback=True,
             default_rate_limit_rpm=20,
             tenant_api_keys={},
+            jwt_shared_secret=secret,
         )
     )
     client = TestClient(app)
+    admin_headers = _admin_headers(secret=secret, roles=["platform_admin"])
 
     plan = client.post(
         "/v1/admin/plans",
@@ -126,6 +153,7 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
             "max_agents": 1,
             "active": True,
         },
+        headers=admin_headers,
     )
     assert plan.status_code == 201
     assert plan.json()["plan_id"] == "tiny"
@@ -142,6 +170,7 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
         "X-Tenant-Id": tenant_id,
         "X-Customer-Id": "user-1",
         "X-Api-Key": "",
+        "Authorization": f"Bearer {jwt.encode({'tenant_id': tenant_id}, secret, algorithm='HS256')}",
     }
 
     first = client.post(
@@ -161,7 +190,14 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
 
 
 def test_usage_export_and_tenant_usage_summary() -> None:
-    app = create_app(_settings(allow_api_key_fallback=True, default_rate_limit_rpm=20))
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(
+        _settings(
+            allow_api_key_fallback=True,
+            default_rate_limit_rpm=20,
+            jwt_shared_secret=secret,
+        )
+    )
     client = TestClient(app)
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
@@ -178,16 +214,69 @@ def test_usage_export_and_tenant_usage_summary() -> None:
     )
     assert run.status_code == 200
 
-    usage = client.get("/v1/admin/tenants/tenant-dev/usage")
+    usage = client.get(
+        "/v1/admin/tenants/tenant-dev/usage",
+        headers=_admin_headers(secret=secret, roles=["tenant_admin"], tenant_ids=["tenant-dev"]),
+    )
     assert usage.status_code == 200
     usage_payload = usage.json()
     assert usage_payload["tenant_id"] == "tenant-dev"
     assert usage_payload["messages_used"] == 1
     assert usage_payload["tokens_used"] > 0
 
-    export = client.get("/v1/admin/usage/export")
+    export = client.get(
+        "/v1/admin/usage/export",
+        headers=_admin_headers(secret=secret, roles=["billing_reader"]),
+    )
     assert export.status_code == 200
     rows = export.json()
     tenant_rows = [row for row in rows if row["tenant_id"] == "tenant-dev"]
     assert len(tenant_rows) == 1
     assert tenant_rows[0]["messages_used"] == 1
+
+
+def test_admin_requires_bearer_jwt() -> None:
+    app = create_app(_settings(jwt_shared_secret="admin-secret-1234567890-1234567890"))
+    client = TestClient(app)
+
+    response = client.get("/v1/admin/plans")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing bearer token"
+
+
+def test_admin_rbac_forbidden_without_required_role_or_scope() -> None:
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(_settings(jwt_shared_secret=secret))
+    client = TestClient(app)
+
+    response = client.get(
+        "/v1/admin/plans",
+        headers=_admin_headers(secret=secret, roles=["viewer"], scopes=["tenant.usage.read"]),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin principal lacks required role or scope"
+
+
+def test_admin_tenant_scope_enforced() -> None:
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(_settings(jwt_shared_secret=secret, allow_api_key_fallback=True))
+    client = TestClient(app)
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-a", name="A", plan="starter", status="active")
+    )
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-b", name="B", plan="starter", status="active")
+    )
+
+    forbidden = client.get(
+        "/v1/admin/tenants/tenant-b/usage",
+        headers=_admin_headers(secret=secret, roles=["tenant_admin"], tenant_ids=["tenant-a"]),
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"] == "Admin principal is not authorized for this tenant"
+
+    allowed = client.get(
+        "/v1/admin/tenants/tenant-a/usage",
+        headers=_admin_headers(secret=secret, roles=["tenant_admin"], tenant_ids=["tenant-a"]),
+    )
+    assert allowed.status_code == 200

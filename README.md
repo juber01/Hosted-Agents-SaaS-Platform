@@ -15,6 +15,7 @@ This is a clean-slate repo scaffold for the SMB multitenant architecture.
 - Managed identity + RBAC is the default for Azure service access.
 - API key auth is disabled by default (`ALLOW_API_KEY_FALLBACK=false`) and should only be enabled temporarily in non-production environments.
 - Production policy in the Foundry adapter requires managed identity.
+- `/v1/admin/*` endpoints require JWT bearer auth; anonymous admin access is blocked.
 
 ## Layout
 
@@ -55,3 +56,13 @@ uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
 - If `TENANT_CATALOG_DSN` is empty, in-memory adapters are used for local development.
 - Postgres runtime does not create schema objects at startup; run `alembic upgrade head` before starting services.
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
+
+## Admin auth and RBAC
+
+- Admin JWT validation uses `JWT_SHARED_SECRET` and `JWT_ALGORITHM`.
+- Role claims can be supplied in `roles` (list) or `role`.
+- Scope claims can be supplied in `scp` or `scope`.
+- Tenant-scoped admin actions require tenant access via one of:
+  - `roles` includes `platform_admin` (global bypass)
+  - `tenant_ids` contains the path tenant id (or `*`)
+  - `tenant_id`/`tid` matches the path tenant id
