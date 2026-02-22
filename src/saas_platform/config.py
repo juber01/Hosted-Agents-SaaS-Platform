@@ -15,6 +15,10 @@ class Settings:
     provisioning_queue_backend: str
     azure_ai_project_endpoint: str
     azure_ai_project_api_key: str
+    azure_use_managed_identity: bool
+    azure_managed_identity_client_id: str
+    allow_api_key_fallback: bool
+    key_vault_url: str
     tenant_api_keys: dict[str, str]
     jwt_shared_secret: str
     jwt_algorithm: str
@@ -47,6 +51,13 @@ def _parse_tenant_api_keys(raw: str) -> dict[str, str]:
     raise ValueError("Invalid TENANT_API_KEYS_JSON")
 
 
+def _parse_bool(raw: str, default: bool) -> bool:
+    text = (raw or "").strip().lower()
+    if not text:
+        return default
+    return text in {"1", "true", "yes", "y", "on"}
+
+
 def get_settings() -> Settings:
     dotenv_path = find_dotenv(usecwd=True)
     if dotenv_path:
@@ -58,6 +69,10 @@ def get_settings() -> Settings:
         provisioning_queue_backend=os.getenv("PROVISIONING_QUEUE_BACKEND", "storage_queue"),
         azure_ai_project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT", ""),
         azure_ai_project_api_key=os.getenv("AZURE_AI_PROJECT_API_KEY", ""),
+        azure_use_managed_identity=_parse_bool(os.getenv("AZURE_USE_MANAGED_IDENTITY", "true"), default=True),
+        azure_managed_identity_client_id=os.getenv("AZURE_MANAGED_IDENTITY_CLIENT_ID", ""),
+        allow_api_key_fallback=_parse_bool(os.getenv("ALLOW_API_KEY_FALLBACK", "false"), default=False),
+        key_vault_url=os.getenv("KEY_VAULT_URL", ""),
         tenant_api_keys=_parse_tenant_api_keys(os.getenv("TENANT_API_KEYS_JSON", "")),
         jwt_shared_secret=os.getenv("JWT_SHARED_SECRET", ""),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),

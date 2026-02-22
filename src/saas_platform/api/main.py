@@ -67,7 +67,7 @@ def _build_context(settings: Settings) -> AppContext:
         usage=usage,
         auth=TenantAuthService(settings),
         limiter=FixedWindowRateLimiter(settings.default_rate_limit_rpm),
-        gateway=FoundryAgentGateway(),
+        gateway=FoundryAgentGateway(settings),
     )
 
 
@@ -81,6 +81,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/admin/debug/identity")
+    def debug_identity() -> dict[str, str | bool]:
+        return {
+            "foundry_auth_mode": ctx.gateway.auth_mode,
+            "azure_use_managed_identity": ctx.settings.azure_use_managed_identity,
+            "allow_api_key_fallback": ctx.settings.allow_api_key_fallback,
+            "key_vault_configured": bool(ctx.settings.key_vault_url),
+        }
 
     @app.post("/v1/tenants", response_model=CreateTenantResponse, status_code=201)
     def create_tenant(request: CreateTenantRequest) -> CreateTenantResponse:

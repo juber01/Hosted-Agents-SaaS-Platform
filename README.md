@@ -10,10 +10,11 @@ This is a clean-slate repo scaffold for the SMB multitenant architecture.
 - Tenant-scoped usage metering and quota enforcement
 - Pluggable adapters for Foundry, storage, and secrets
 
-## What this repo is not
+## Identity and access default
 
-- It is not a direct continuation of the current UK-CGT-focused runtime.
-- Domain-specific flows (like UK CGT) should be implemented as tenant agent extensions later.
+- Managed identity + RBAC is the default for Azure service access.
+- API key auth is disabled by default (`ALLOW_API_KEY_FALLBACK=false`) and should only be enabled temporarily in non-production environments.
+- Production policy in the Foundry adapter requires managed identity.
 
 ## Layout
 
@@ -36,6 +37,7 @@ uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
 ## Endpoints
 
 - `GET /health`
+- `GET /v1/admin/debug/identity`
 - `POST /v1/tenants`
 - `GET /v1/tenants/{tenant_id}`
 - `POST /v1/provisioning/jobs/run-next`

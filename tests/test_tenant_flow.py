@@ -12,6 +12,10 @@ def _settings() -> Settings:
         provisioning_queue_backend="storage_queue",
         azure_ai_project_endpoint="",
         azure_ai_project_api_key="",
+        azure_use_managed_identity=True,
+        azure_managed_identity_client_id="",
+        allow_api_key_fallback=False,
+        key_vault_url="",
         tenant_api_keys={"tenant-dev": "dev-key-123"},
         jwt_shared_secret="",
         jwt_algorithm="HS256",
@@ -53,7 +57,10 @@ def test_tenant_provisioning_and_run_flow() -> None:
 
 
 def test_api_key_auth_and_rate_limit() -> None:
-    app = create_app(_settings())
+    settings = _settings()
+    settings = Settings(**{**settings.__dict__, "allow_api_key_fallback": True})
+
+    app = create_app(settings)
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
@@ -86,3 +93,14 @@ def test_api_key_auth_and_rate_limit() -> None:
         json={"agent_id": "support", "user_id": "user-1", "message": "third"},
     )
     assert third.status_code == 429
+
+
+def test_identity_debug_endpoint_prefers_managed_identity() -> None:
+    app = create_app(_settings())
+    client = TestClient(app)
+
+    response = client.get("/v1/admin/debug/identity")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["foundry_auth_mode"] == "managed_identity"
+    assert payload["azure_use_managed_identity"] is True
