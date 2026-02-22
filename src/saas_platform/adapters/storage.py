@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import deque
+from datetime import datetime, timedelta, timezone
 
 from saas_platform.domain.interfaces import PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
 from saas_platform.domain.models import (
@@ -40,23 +40,66 @@ class InMemoryPlanCatalog(PlanCatalog):
 
 class InMemoryProvisioningQueue(ProvisioningQueue):
     def __init__(self) -> None:
-        self.jobs: deque[ProvisioningJob] = deque()
+        self._jobs: dict[str, ProvisioningJob] = {}
+        self._job_order: list[str] = []
 
     def enqueue(self, job: ProvisioningJob) -> None:
-        self.jobs.append(job)
+        idempotency_key = job.idempotency_key or job.job_id
+        for existing in self._jobs.values():
+            if existing.idempotency_key == idempotency_key:
+                return
+
+        queued = job.model_copy(
+            update={
+                "idempotency_key": idempotency_key,
+                "state": "queued",
+                "available_at": job.available_at or datetime.now(timezone.utc),
+            }
+        )
+        self._jobs[queued.job_id] = queued
+        self._job_order.append(queued.job_id)
 
     def claim_next(self) -> ProvisioningJob | None:
-        if not self.jobs:
+        if not self._jobs:
             return None
-        job = self.jobs.popleft()
-        job.state = "running"
-        return job
+
+        now = datetime.now(timezone.utc)
+        candidates = [self._jobs[job_id] for job_id in self._job_order if job_id in self._jobs]
+        for job in sorted(candidates, key=lambda item: item.available_at):
+            if job.state != "queued" or job.available_at > now:
+                continue
+            job.state = "running"
+            return job.model_copy()
+        return None
 
     def mark_done(self, job_id: str) -> None:
-        return None
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job.state = "done"
 
-    def mark_failed(self, job_id: str, error: str) -> None:
-        return None
+    def mark_retry(self, job_id: str, error: str, retry_in_seconds: int) -> None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job.state = "queued"
+        job.retries += 1
+        job.error = error[:500]
+        job.available_at = datetime.now(timezone.utc) + timedelta(seconds=max(retry_in_seconds, 0))
+
+    def mark_dead_letter(self, job_id: str, error: str) -> None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job.state = "dead_letter"
+        job.retries += 1
+        job.error = error[:500]
+
+    def get_job(self, job_id: str) -> ProvisioningJob | None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        return job.model_copy()
 
 
 class InMemoryUsageMeter(UsageMeter):

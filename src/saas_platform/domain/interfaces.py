@@ -43,7 +43,15 @@ class ProvisioningQueue(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def mark_failed(self, job_id: str, error: str) -> None:
+    def mark_retry(self, job_id: str, error: str, retry_in_seconds: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def mark_dead_letter(self, job_id: str, error: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_job(self, job_id: str) -> ProvisioningJob | None:
         raise NotImplementedError
 
 

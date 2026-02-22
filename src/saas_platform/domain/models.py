@@ -37,9 +37,13 @@ class ProvisioningJob(BaseModel):
     job_id: str
     tenant_id: str
     step: str
+    idempotency_key: str | None = None
     state: str = "queued"
     retries: int = 0
+    max_attempts: int = 3
     error: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    available_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class UsageEvent(BaseModel):

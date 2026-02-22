@@ -124,6 +124,8 @@ def _build_context(settings: Settings) -> AppContext:
         queue = InMemoryProvisioningQueue()
         usage = InMemoryUsageMeter()
 
+    queue = _resolve_queue_backend(settings=settings, base_queue=queue)
+
     _seed_default_plans(plans)
 
     return AppContext(
@@ -137,6 +139,38 @@ def _build_context(settings: Settings) -> AppContext:
         limiter=FixedWindowRateLimiter(settings.default_rate_limit_rpm),
         gateway=FoundryAgentGateway(settings),
     )
+
+
+def _resolve_queue_backend(settings: Settings, base_queue: ProvisioningQueue) -> ProvisioningQueue:
+    backend = (settings.provisioning_queue_backend or "").strip().lower()
+    if backend in {"", "database"}:
+        return base_queue
+
+    if backend == "storage_queue":
+        if not settings.azure_storage_queue_connection_string:
+            return base_queue
+        from saas_platform.adapters.queue import StorageQueueProvisioningQueue
+
+        return StorageQueueProvisioningQueue(
+            delegate=base_queue,
+            connection_string=settings.azure_storage_queue_connection_string,
+            queue_name=settings.azure_storage_queue_name,
+            dead_letter_queue_name=settings.azure_storage_queue_dead_letter_queue_name,
+        )
+
+    if backend == "service_bus":
+        if not settings.azure_service_bus_connection_string:
+            return base_queue
+        from saas_platform.adapters.queue import ServiceBusProvisioningQueue
+
+        return ServiceBusProvisioningQueue(
+            delegate=base_queue,
+            connection_string=settings.azure_service_bus_connection_string,
+            queue_name=settings.azure_service_bus_queue_name,
+            dead_letter_queue_name=settings.azure_service_bus_dead_letter_queue_name,
+        )
+
+    raise RuntimeError(f"Unsupported PROVISIONING_QUEUE_BACKEND: {settings.provisioning_queue_backend}")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -241,7 +275,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job_id = str(uuid4())
 
         ctx.catalog.upsert_tenant(Tenant(tenant_id=tenant_id, name=request.name, plan=request.plan))
-        ctx.queue.enqueue(ProvisioningJob(job_id=job_id, tenant_id=tenant_id, step="bootstrap"))
+        ctx.queue.enqueue(
+            ProvisioningJob(
+                job_id=job_id,
+                tenant_id=tenant_id,
+                step="bootstrap",
+                idempotency_key=f"{tenant_id}:bootstrap",
+                max_attempts=ctx.settings.provisioning_job_max_attempts,
+            )
+        )
 
         return CreateTenantResponse(tenant_id=tenant_id, status="pending", provisioning_job_id=job_id)
 
@@ -309,7 +351,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/provisioning/jobs/run-next")
     def run_next_provisioning_job() -> dict[str, bool]:
-        processed = process_next_job(queue=ctx.queue, catalog=ctx.catalog)
+        processed = process_next_job(
+            queue=ctx.queue,
+            catalog=ctx.catalog,
+            default_max_attempts=ctx.settings.provisioning_job_max_attempts,
+            retry_base_seconds=ctx.settings.provisioning_retry_base_seconds,
+        )
         return {"processed": processed}
 
     @app.post("/v1/tenants/{tenant_id}/runs", response_model=ExecuteRunResponse)

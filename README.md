@@ -35,6 +35,18 @@ pip install -e '.[dev]'
 uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
 ```
 
+Run provisioning worker (separate process):
+
+```bash
+saas-platform-worker
+```
+
+Process a single job and exit:
+
+```bash
+saas-platform-worker --once
+```
+
 ## Endpoints
 
 - `GET /health`
@@ -47,7 +59,7 @@ uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
 - `GET /v1/admin/usage/export`
 - `POST /v1/tenants`
 - `GET /v1/tenants/{tenant_id}`
-- `POST /v1/provisioning/jobs/run-next`
+- `POST /v1/provisioning/jobs/run-next` (debug/local fallback)
 - `POST /v1/tenants/{tenant_id}/runs`
 
 ## Phase 1 notes
@@ -56,6 +68,10 @@ uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
 - If `TENANT_CATALOG_DSN` is empty, in-memory adapters are used for local development.
 - Postgres runtime does not create schema objects at startup; run `alembic upgrade head` before starting services.
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
+- Provisioning jobs support idempotency keys, retry backoff, and dead-letter state.
+- `PROVISIONING_QUEUE_BACKEND=database` uses only Postgres/in-memory queue state.
+- `PROVISIONING_QUEUE_BACKEND=storage_queue` wraps the base queue with Azure Storage Queue signaling when `AZURE_STORAGE_QUEUE_CONNECTION_STRING` is configured.
+- `PROVISIONING_QUEUE_BACKEND=service_bus` wraps the base queue with Azure Service Bus signaling when `AZURE_SERVICE_BUS_CONNECTION_STRING` is configured.
 
 ## Admin auth and RBAC
 

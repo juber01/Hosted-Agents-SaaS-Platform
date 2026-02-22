@@ -13,6 +13,15 @@ class Settings:
     app_env: str
     tenant_catalog_dsn: str
     provisioning_queue_backend: str
+    provisioning_worker_poll_seconds: int
+    provisioning_job_max_attempts: int
+    provisioning_retry_base_seconds: int
+    azure_storage_queue_connection_string: str
+    azure_storage_queue_name: str
+    azure_storage_queue_dead_letter_queue_name: str
+    azure_service_bus_connection_string: str
+    azure_service_bus_queue_name: str
+    azure_service_bus_dead_letter_queue_name: str
     azure_ai_project_endpoint: str
     azure_ai_project_api_key: str
     azure_use_managed_identity: bool
@@ -67,6 +76,19 @@ def get_settings() -> Settings:
         app_env=os.getenv("APP_ENV", "dev"),
         tenant_catalog_dsn=os.getenv("TENANT_CATALOG_DSN", ""),
         provisioning_queue_backend=os.getenv("PROVISIONING_QUEUE_BACKEND", "storage_queue"),
+        provisioning_worker_poll_seconds=int(os.getenv("PROVISIONING_WORKER_POLL_SECONDS", "2")),
+        provisioning_job_max_attempts=int(os.getenv("PROVISIONING_JOB_MAX_ATTEMPTS", "3")),
+        provisioning_retry_base_seconds=int(os.getenv("PROVISIONING_RETRY_BASE_SECONDS", "5")),
+        azure_storage_queue_connection_string=os.getenv("AZURE_STORAGE_QUEUE_CONNECTION_STRING", ""),
+        azure_storage_queue_name=os.getenv("AZURE_STORAGE_QUEUE_NAME", "provisioning-jobs"),
+        azure_storage_queue_dead_letter_queue_name=os.getenv(
+            "AZURE_STORAGE_QUEUE_DEAD_LETTER_QUEUE_NAME", "provisioning-jobs-deadletter"
+        ),
+        azure_service_bus_connection_string=os.getenv("AZURE_SERVICE_BUS_CONNECTION_STRING", ""),
+        azure_service_bus_queue_name=os.getenv("AZURE_SERVICE_BUS_QUEUE_NAME", "provisioning-jobs"),
+        azure_service_bus_dead_letter_queue_name=os.getenv(
+            "AZURE_SERVICE_BUS_DEAD_LETTER_QUEUE_NAME", "provisioning-jobs-deadletter"
+        ),
         azure_ai_project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT", ""),
         azure_ai_project_api_key=os.getenv("AZURE_AI_PROJECT_API_KEY", ""),
         azure_use_managed_identity=_parse_bool(os.getenv("AZURE_USE_MANAGED_IDENTITY", "true"), default=True),

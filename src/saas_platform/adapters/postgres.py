@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -47,11 +47,14 @@ class ProvisioningJobRow(Base):
     __tablename__ = "provisioning_jobs"
 
     job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     step: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -186,14 +189,23 @@ class PostgresProvisioningQueue(ProvisioningQueue):
 
     def enqueue(self, job: ProvisioningJob) -> None:
         now = datetime.now(timezone.utc)
+        idempotency_key = job.idempotency_key or job.job_id
         with self._sf.session() as session:
+            exists = session.execute(
+                select(ProvisioningJobRow.job_id).where(ProvisioningJobRow.idempotency_key == idempotency_key)
+            ).scalar_one_or_none()
+            if exists:
+                return
             row = ProvisioningJobRow(
                 job_id=job.job_id,
+                idempotency_key=idempotency_key,
                 tenant_id=job.tenant_id,
                 step=job.step,
                 state="queued",
                 retries=job.retries,
+                max_attempts=max(job.max_attempts, 1),
                 error=job.error,
+                available_at=job.available_at,
                 created_at=now,
                 updated_at=now,
             )
@@ -204,8 +216,11 @@ class PostgresProvisioningQueue(ProvisioningQueue):
         with self._sf.session() as session:
             stmt = (
                 select(ProvisioningJobRow)
-                .where(ProvisioningJobRow.state == "queued")
-                .order_by(ProvisioningJobRow.created_at)
+                .where(
+                    ProvisioningJobRow.state == "queued",
+                    ProvisioningJobRow.available_at <= datetime.now(timezone.utc),
+                )
+                .order_by(ProvisioningJobRow.available_at, ProvisioningJobRow.created_at)
                 .limit(1)
                 .with_for_update(skip_locked=True)
             )
@@ -219,9 +234,13 @@ class PostgresProvisioningQueue(ProvisioningQueue):
                 job_id=row.job_id,
                 tenant_id=row.tenant_id,
                 step=row.step,
+                idempotency_key=row.idempotency_key,
                 state=row.state,
                 retries=row.retries,
+                max_attempts=row.max_attempts,
                 error=row.error,
+                created_at=row.created_at,
+                available_at=row.available_at,
             )
 
     def mark_done(self, job_id: str) -> None:
@@ -233,16 +252,46 @@ class PostgresProvisioningQueue(ProvisioningQueue):
             row.updated_at = datetime.now(timezone.utc)
             session.commit()
 
-    def mark_failed(self, job_id: str, error: str) -> None:
+    def mark_retry(self, job_id: str, error: str, retry_in_seconds: int) -> None:
         with self._sf.session() as session:
             row = session.get(ProvisioningJobRow, job_id)
             if row is None:
                 return
-            row.state = "failed"
+            row.state = "queued"
+            row.retries += 1
+            row.error = error[:500]
+            row.available_at = datetime.now(timezone.utc) + timedelta(seconds=max(retry_in_seconds, 0))
+            row.updated_at = datetime.now(timezone.utc)
+            session.commit()
+
+    def mark_dead_letter(self, job_id: str, error: str) -> None:
+        with self._sf.session() as session:
+            row = session.get(ProvisioningJobRow, job_id)
+            if row is None:
+                return
+            row.state = "dead_letter"
             row.retries += 1
             row.error = error[:500]
             row.updated_at = datetime.now(timezone.utc)
             session.commit()
+
+    def get_job(self, job_id: str) -> ProvisioningJob | None:
+        with self._sf.session() as session:
+            row = session.get(ProvisioningJobRow, job_id)
+            if row is None:
+                return None
+            return ProvisioningJob(
+                job_id=row.job_id,
+                tenant_id=row.tenant_id,
+                step=row.step,
+                idempotency_key=row.idempotency_key,
+                state=row.state,
+                retries=row.retries,
+                max_attempts=row.max_attempts,
+                error=row.error,
+                created_at=row.created_at,
+                available_at=row.available_at,
+            )
 
 
 class PostgresUsageMeter(UsageMeter):
