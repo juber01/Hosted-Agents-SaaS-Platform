@@ -47,6 +47,14 @@ Process a single job and exit:
 saas-platform-worker --once
 ```
 
+## Azure deployment (step 1)
+
+- Split API and worker deployment scaffolding is in `infra/azure/containerapps/main.bicep`.
+- This template deploys Container Apps + UAMI identities, Key Vault (RBAC mode), Postgres, Redis, Storage Queue, and optional Service Bus.
+- Use `infra/azure/containerapps/main.parameters.example.json` as your starting parameter file.
+- Deployment runbook:
+  - `infra/azure/containerapps/README.md`
+
 ## Endpoints
 
 - `GET /health`

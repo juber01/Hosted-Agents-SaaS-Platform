@@ -1,0 +1,96 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "prefix": {
+      "value": "saaspf"
+    },
+    "location": {
+      "value": "uksouth"
+    },
+    "containerImage": {
+      "value": "myregistry.azurecr.io/saas-platform:latest"
+    },
+    "containerRegistryName": {
+      "value": "myregistry"
+    },
+    "appEnv": {
+      "value": "prod"
+    },
+    "queueBackend": {
+      "value": "storage_queue"
+    },
+    "serviceBusEnabled": {
+      "value": false
+    },
+    "allowApiKeyFallback": {
+      "value": false
+    },
+    "jwtJwksUrl": {
+      "value": "https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
+    },
+    "jwtIssuer": {
+      "value": "https://login.microsoftonline.com/<tenant-id>/v2.0"
+    },
+    "jwtAudience": {
+      "value": "api://<app-registration-client-id>"
+    },
+    "foundryEndpoint": {
+      "value": ""
+    },
+    "postgresAdminUser": {
+      "value": "saasadmin"
+    },
+    "postgresAdminPassword": {
+      "value": "REPLACE-AT-DEPLOY-TIME"
+    },
+    "postgresSkuName": {
+      "value": "Standard_B1ms"
+    },
+    "postgresVersion": {
+      "value": "16"
+    },
+    "postgresStorageMb": {
+      "value": 32768
+    },
+    "postgresDatabaseName": {
+      "value": "saas_platform"
+    },
+    "defaultRateLimitRpm": {
+      "value": 60
+    },
+    "redisEnabled": {
+      "value": true
+    },
+    "provisioningWorkerPollSeconds": {
+      "value": 2
+    },
+    "provisioningQueueName": {
+      "value": "provisioning-jobs"
+    },
+    "provisioningDeadLetterQueueName": {
+      "value": "provisioning-jobs-deadletter"
+    },
+    "redisSkuFamily": {
+      "value": "C"
+    },
+    "redisSkuName": {
+      "value": "Basic"
+    },
+    "redisCapacity": {
+      "value": 1
+    },
+    "apiMinReplicas": {
+      "value": 1
+    },
+    "apiMaxReplicas": {
+      "value": 5
+    },
+    "workerMinReplicas": {
+      "value": 1
+    },
+    "workerMaxReplicas": {
+      "value": 10
+    }
+  }
+}
