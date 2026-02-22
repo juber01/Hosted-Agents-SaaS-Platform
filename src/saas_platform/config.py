@@ -31,6 +31,10 @@ class Settings:
     allow_api_key_fallback: bool
     key_vault_url: str
     tenant_api_keys: dict[str, str]
+    jwt_jwks_url: str
+    jwt_issuer: str
+    jwt_audience: str
+    jwt_jwks_cache_ttl_seconds: int
     jwt_shared_secret: str
     jwt_algorithm: str
     default_rate_limit_rpm: int
@@ -100,6 +104,10 @@ def get_settings() -> Settings:
         allow_api_key_fallback=_parse_bool(os.getenv("ALLOW_API_KEY_FALLBACK", "false"), default=False),
         key_vault_url=os.getenv("KEY_VAULT_URL", ""),
         tenant_api_keys=_parse_tenant_api_keys(os.getenv("TENANT_API_KEYS_JSON", "")),
+        jwt_jwks_url=os.getenv("JWT_JWKS_URL", ""),
+        jwt_issuer=os.getenv("JWT_ISSUER", ""),
+        jwt_audience=os.getenv("JWT_AUDIENCE", ""),
+        jwt_jwks_cache_ttl_seconds=int(os.getenv("JWT_JWKS_CACHE_TTL_SECONDS", "300")),
         jwt_shared_secret=os.getenv("JWT_SHARED_SECRET", ""),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         default_rate_limit_rpm=int(os.getenv("DEFAULT_RATE_LIMIT_RPM", "60")),

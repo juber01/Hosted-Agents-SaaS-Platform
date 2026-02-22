@@ -36,5 +36,6 @@ Assign these to the app and worker managed identities (least privilege):
 
 - `/v1/admin/*` endpoints require JWT bearer authentication.
 - Authorization uses Entra-style role/scope claims mapped to endpoint permissions.
+- Token validation should use Entra JWKS (`JWT_JWKS_URL`, `JWT_ISSUER`, `JWT_AUDIENCE`) in production.
 - Use the explicit contract in:
   - `docs/ENTRA_ADMIN_RBAC_CONTRACT.md`

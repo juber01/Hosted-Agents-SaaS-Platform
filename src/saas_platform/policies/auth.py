@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from threading import Lock
+import time
 from typing import Any
+from urllib import request
 
 from fastapi import Header, HTTPException
 import jwt
@@ -28,6 +32,10 @@ class AdminPrincipal:
 
     def can_access_tenant(self, tenant_id: str) -> bool:
         return self.is_platform_admin or "*" in self.tenant_ids or tenant_id in self.tenant_ids
+
+
+_JWKS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_JWKS_CACHE_LOCK = Lock()
 
 
 class TenantAuthService:
@@ -61,21 +69,8 @@ class TenantAuthService:
         return bool(expected and api_key and api_key == expected)
 
     def _is_valid_jwt(self, tenant_id: str, authorization: str) -> bool:
-        if not self.settings.jwt_shared_secret:
-            return False
-        if not authorization or not authorization.lower().startswith("bearer "):
-            return False
-
-        token = authorization.split(" ", 1)[1].strip()
-        if not token:
-            return False
-
         try:
-            payload = jwt.decode(
-                token,
-                self.settings.jwt_shared_secret,
-                algorithms=[self.settings.jwt_algorithm],
-            )
+            payload = _decode_bearer_jwt(settings=self.settings, authorization=authorization)
             claim_tenant = str(payload.get("tenant_id") or payload.get("tid") or "")
             return claim_tenant == tenant_id
         except Exception:
@@ -116,15 +111,31 @@ class AdminAuthService:
 
 
 def _decode_bearer_jwt(settings: Settings, authorization: str) -> dict[str, Any]:
-    if not settings.jwt_shared_secret:
-        raise HTTPException(status_code=500, detail="JWT_SHARED_SECRET must be configured for admin auth")
+    token = _extract_bearer_token(authorization)
+
+    if _is_jwks_enabled(settings):
+        return _decode_bearer_jwt_with_jwks(settings=settings, token=token)
+
+    if settings.jwt_shared_secret:
+        return _decode_bearer_jwt_with_shared_secret(settings=settings, token=token)
+
+    raise HTTPException(
+        status_code=500,
+        detail="JWT auth is not configured. Set JWKS config or JWT_SHARED_SECRET.",
+    )
+
+
+def _extract_bearer_token(authorization: str) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
+    return token
 
+
+def _decode_bearer_jwt_with_shared_secret(settings: Settings, token: str) -> dict[str, Any]:
     try:
         claims: dict[str, Any] = jwt.decode(
             token,
@@ -134,6 +145,94 @@ def _decode_bearer_jwt(settings: Settings, authorization: str) -> dict[str, Any]
         return claims
     except Exception as err:
         raise HTTPException(status_code=401, detail="Invalid bearer token") from err
+
+
+def _decode_bearer_jwt_with_jwks(settings: Settings, token: str) -> dict[str, Any]:
+    jwks_url = settings.jwt_jwks_url.strip()
+    issuer = settings.jwt_issuer.strip()
+    audience = settings.jwt_audience.strip()
+    if not (jwks_url and issuer and audience):
+        raise HTTPException(
+            status_code=500,
+            detail="JWT_JWKS_URL, JWT_ISSUER, and JWT_AUDIENCE must all be configured for JWKS auth",
+        )
+
+    try:
+        signing_key = _resolve_jwks_signing_key(
+            token=token,
+            jwks_url=jwks_url,
+            cache_ttl_seconds=max(settings.jwt_jwks_cache_ttl_seconds, 0),
+        )
+        claims: dict[str, Any] = jwt.decode(
+            token,
+            signing_key,
+            algorithms=[settings.jwt_algorithm],
+            audience=audience,
+            issuer=issuer,
+        )
+        return claims
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=401, detail="Invalid bearer token") from err
+
+
+def _resolve_jwks_signing_key(token: str, jwks_url: str, cache_ttl_seconds: int) -> Any:
+    try:
+        headers = jwt.get_unverified_header(token)
+    except Exception as err:
+        raise HTTPException(status_code=401, detail="Invalid bearer token header") from err
+
+    kid = str(headers.get("kid") or "").strip()
+    if not kid:
+        raise HTTPException(status_code=401, detail="Invalid bearer token header")
+
+    jwks_payload = _get_jwks_payload(jwks_url=jwks_url, cache_ttl_seconds=cache_ttl_seconds)
+    keys = jwks_payload.get("keys")
+    if not isinstance(keys, list):
+        raise HTTPException(status_code=401, detail="Invalid JWKS payload")
+
+    for entry in keys:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("kid") or "") != kid:
+            continue
+        try:
+            return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(entry))
+        except Exception as err:
+            raise HTTPException(status_code=401, detail="Invalid JWKS signing key") from err
+
+    raise HTTPException(status_code=401, detail="Signing key not found in JWKS")
+
+
+def _get_jwks_payload(jwks_url: str, cache_ttl_seconds: int) -> dict[str, Any]:
+    now = time.time()
+    with _JWKS_CACHE_LOCK:
+        cached = _JWKS_CACHE.get(jwks_url)
+        if cached and cached[0] > now:
+            return cached[1]
+
+    try:
+        with request.urlopen(jwks_url, timeout=5) as response:
+            raw = response.read().decode("utf-8")
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("JWKS payload must be an object")
+    except Exception as err:
+        raise HTTPException(status_code=401, detail="Unable to load JWKS") from err
+
+    expires_at = now + max(cache_ttl_seconds, 0)
+    with _JWKS_CACHE_LOCK:
+        _JWKS_CACHE[jwks_url] = (expires_at, payload)
+    return payload
+
+
+def _is_jwks_enabled(settings: Settings) -> bool:
+    return bool(
+        settings.jwt_jwks_url.strip()
+        or settings.jwt_issuer.strip()
+        or settings.jwt_audience.strip()
+    )
 
 
 def _extract_scopes(claims: dict[str, Any]) -> set[str]:

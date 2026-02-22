@@ -79,7 +79,10 @@ saas-platform-worker --once
 
 ## Admin auth and RBAC
 
-- Admin JWT validation uses `JWT_SHARED_SECRET` and `JWT_ALGORITHM`.
+- Admin/tenant bearer JWT validation is JWKS-based when configured:
+  - `JWT_JWKS_URL`, `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_JWKS_CACHE_TTL_SECONDS`
+- Shared-secret JWT validation (`JWT_SHARED_SECRET`) is supported as a fallback for non-production transitions.
+- `JWT_ALGORITHM` should align with your token mode (`RS256` for Entra JWKS, `HS256` for shared-secret fallback).
 - Role claims can be supplied in `roles` (list) or `role`.
 - Scope claims can be supplied in `scp` or `scope`.
 - Tenant-scoped admin actions require tenant access via one of:

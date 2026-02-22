@@ -2,6 +2,16 @@
 
 This document defines how Microsoft Entra access token claims map to `/v1/admin/*` authorization checks.
 
+## Validation configuration
+
+- Configure JWKS validation inputs:
+  - `JWT_JWKS_URL`
+  - `JWT_ISSUER`
+  - `JWT_AUDIENCE`
+  - `JWT_JWKS_CACHE_TTL_SECONDS` (default 300s)
+- `JWT_ALGORITHM` should typically be `RS256` for Entra-issued tokens.
+- Shared-secret JWT mode is available as a fallback for non-production transitions.
+
 ## Token claims consumed
 
 - `roles` or `role`:
