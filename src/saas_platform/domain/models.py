@@ -12,6 +12,20 @@ class Tenant(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class PlanLimits(BaseModel):
+    monthly_messages: int
+    monthly_token_cap: int
+    max_agents: int
+
+
+class Plan(BaseModel):
+    plan_id: str
+    display_name: str
+    limits: PlanLimits
+    active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class TenantConfig(BaseModel):
     tenant_id: str
     config_version: int = 1
@@ -37,6 +51,23 @@ class UsageEvent(BaseModel):
     tokens_in: int
     tokens_out: int
     cost_estimate: float
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TenantUsageSummary(BaseModel):
+    tenant_id: str
+    month: str
+    messages_used: int
+    tokens_used: int
+    cost_estimate: float
+
+
+class TenantBillingRecord(BaseModel):
+    tenant_id: str
+    month: str
+    messages_used: int
+    tokens_used: int
+    cost_estimate: float
 
 
 class CreateTenantRequest(BaseModel):
@@ -48,6 +79,19 @@ class CreateTenantResponse(BaseModel):
     tenant_id: str
     status: str
     provisioning_job_id: str
+
+
+class CreatePlanRequest(BaseModel):
+    plan_id: str
+    display_name: str
+    monthly_messages: int
+    monthly_token_cap: int
+    max_agents: int
+    active: bool = True
+
+
+class UpdateTenantPlanRequest(BaseModel):
+    plan_id: str
 
 
 class ExecuteRunRequest(BaseModel):

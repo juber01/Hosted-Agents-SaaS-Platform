@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from saas_platform.domain.models import ProvisioningJob, Tenant, UsageEvent
+from saas_platform.domain.models import Plan, ProvisioningJob, Tenant, TenantBillingRecord, TenantUsageSummary, UsageEvent
 
 
 class TenantCatalog(ABC):
@@ -12,6 +12,20 @@ class TenantCatalog(ABC):
 
     @abstractmethod
     def get_tenant(self, tenant_id: str) -> Tenant | None:
+        raise NotImplementedError
+
+
+class PlanCatalog(ABC):
+    @abstractmethod
+    def upsert_plan(self, plan: Plan) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_plan(self, plan_id: str) -> Plan | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_plans(self) -> list[Plan]:
         raise NotImplementedError
 
 
@@ -36,6 +50,14 @@ class ProvisioningQueue(ABC):
 class UsageMeter(ABC):
     @abstractmethod
     def record(self, event: UsageEvent) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def summarize_tenant_month(self, tenant_id: str, month: str) -> TenantUsageSummary:
+        raise NotImplementedError
+
+    @abstractmethod
+    def summarize_all_tenants_month(self, month: str) -> list[TenantBillingRecord]:
         raise NotImplementedError
 
 

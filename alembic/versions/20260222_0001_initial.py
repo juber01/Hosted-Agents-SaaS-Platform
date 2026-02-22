@@ -19,6 +19,18 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
+        "plans",
+        sa.Column("plan_id", sa.String(length=50), nullable=False),
+        sa.Column("display_name", sa.String(length=100), nullable=False),
+        sa.Column("monthly_messages", sa.Integer(), nullable=False),
+        sa.Column("monthly_token_cap", sa.Integer(), nullable=False),
+        sa.Column("max_agents", sa.Integer(), nullable=False),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("plan_id"),
+    )
+
+    op.create_table(
         "tenants",
         sa.Column("tenant_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
@@ -68,3 +80,4 @@ def downgrade() -> None:
     op.drop_table("provisioning_jobs")
 
     op.drop_table("tenants")
+    op.drop_table("plans")

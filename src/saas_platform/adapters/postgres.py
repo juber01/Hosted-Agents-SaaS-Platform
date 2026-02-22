@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, create_engine, select
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from saas_platform.domain.interfaces import ProvisioningQueue, TenantCatalog, UsageMeter
-from saas_platform.domain.models import ProvisioningJob, Tenant, UsageEvent
+from saas_platform.domain.interfaces import PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
+from saas_platform.domain.models import (
+    Plan,
+    PlanLimits,
+    ProvisioningJob,
+    Tenant,
+    TenantBillingRecord,
+    TenantUsageSummary,
+    UsageEvent,
+)
 
 
 class Base(DeclarativeBase):
@@ -20,6 +28,18 @@ class TenantRow(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     plan: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlanRow(Base):
+    __tablename__ = "plans"
+
+    plan_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    monthly_messages: Mapped[int] = mapped_column(Integer, nullable=False)
+    monthly_token_cap: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_agents: Mapped[int] = mapped_column(Integer, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -96,6 +116,68 @@ class PostgresTenantCatalog(TenantCatalog):
                 status=row.status,
                 created_at=row.created_at,
             )
+
+
+class PostgresPlanCatalog(PlanCatalog):
+    def __init__(self, session_factory: PostgresSessionFactory) -> None:
+        self._sf = session_factory
+
+    def upsert_plan(self, plan: Plan) -> None:
+        with self._sf.session() as session:
+            row = session.get(PlanRow, plan.plan_id)
+            if row is None:
+                row = PlanRow(
+                    plan_id=plan.plan_id,
+                    display_name=plan.display_name,
+                    monthly_messages=plan.limits.monthly_messages,
+                    monthly_token_cap=plan.limits.monthly_token_cap,
+                    max_agents=plan.limits.max_agents,
+                    active=plan.active,
+                    created_at=plan.created_at,
+                )
+                session.add(row)
+            else:
+                row.display_name = plan.display_name
+                row.monthly_messages = plan.limits.monthly_messages
+                row.monthly_token_cap = plan.limits.monthly_token_cap
+                row.max_agents = plan.limits.max_agents
+                row.active = plan.active
+            session.commit()
+
+    def get_plan(self, plan_id: str) -> Plan | None:
+        with self._sf.session() as session:
+            row = session.get(PlanRow, plan_id)
+            if row is None:
+                return None
+            return Plan(
+                plan_id=row.plan_id,
+                display_name=row.display_name,
+                limits=PlanLimits(
+                    monthly_messages=row.monthly_messages,
+                    monthly_token_cap=row.monthly_token_cap,
+                    max_agents=row.max_agents,
+                ),
+                active=bool(row.active),
+                created_at=row.created_at,
+            )
+
+    def list_plans(self) -> list[Plan]:
+        with self._sf.session() as session:
+            rows = session.execute(select(PlanRow).order_by(PlanRow.plan_id)).scalars().all()
+            return [
+                Plan(
+                    plan_id=row.plan_id,
+                    display_name=row.display_name,
+                    limits=PlanLimits(
+                        monthly_messages=row.monthly_messages,
+                        monthly_token_cap=row.monthly_token_cap,
+                        max_agents=row.max_agents,
+                    ),
+                    active=bool(row.active),
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
 
 
 class PostgresProvisioningQueue(ProvisioningQueue):
@@ -178,7 +260,65 @@ class PostgresUsageMeter(UsageMeter):
                 tokens_in=event.tokens_in,
                 tokens_out=event.tokens_out,
                 cost_estimate=event.cost_estimate,
-                created_at=datetime.now(timezone.utc),
+                created_at=event.created_at,
             )
             session.merge(row)
             session.commit()
+
+    def summarize_tenant_month(self, tenant_id: str, month: str) -> TenantUsageSummary:
+        start, end = _month_bounds(month)
+        with self._sf.session() as session:
+            stmt = select(
+                func.count(UsageEventRow.request_id),
+                func.coalesce(func.sum(UsageEventRow.tokens_in + UsageEventRow.tokens_out), 0),
+                func.coalesce(func.sum(UsageEventRow.cost_estimate), 0.0),
+            ).where(
+                UsageEventRow.tenant_id == tenant_id,
+                UsageEventRow.created_at >= start,
+                UsageEventRow.created_at < end,
+            )
+            messages_used, tokens_used, cost_estimate = session.execute(stmt).one()
+            return TenantUsageSummary(
+                tenant_id=tenant_id,
+                month=month,
+                messages_used=int(messages_used or 0),
+                tokens_used=int(tokens_used or 0),
+                cost_estimate=float(cost_estimate or 0.0),
+            )
+
+    def summarize_all_tenants_month(self, month: str) -> list[TenantBillingRecord]:
+        start, end = _month_bounds(month)
+        with self._sf.session() as session:
+            stmt = (
+                select(
+                    UsageEventRow.tenant_id,
+                    func.count(UsageEventRow.request_id).label("messages_used"),
+                    func.coalesce(func.sum(UsageEventRow.tokens_in + UsageEventRow.tokens_out), 0).label(
+                        "tokens_used"
+                    ),
+                    func.coalesce(func.sum(UsageEventRow.cost_estimate), 0.0).label("cost_estimate"),
+                )
+                .where(UsageEventRow.created_at >= start, UsageEventRow.created_at < end)
+                .group_by(UsageEventRow.tenant_id)
+                .order_by(UsageEventRow.tenant_id)
+            )
+            rows = session.execute(stmt).all()
+            return [
+                TenantBillingRecord(
+                    tenant_id=str(tenant_id),
+                    month=month,
+                    messages_used=int(messages_used or 0),
+                    tokens_used=int(tokens_used or 0),
+                    cost_estimate=float(cost_estimate or 0.0),
+                )
+                for tenant_id, messages_used, tokens_used, cost_estimate in rows
+            ]
+
+
+def _month_bounds(month: str) -> tuple[datetime, datetime]:
+    start = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
