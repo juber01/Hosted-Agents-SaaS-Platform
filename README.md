@@ -70,8 +70,12 @@ saas-platform-worker --once
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
 - Provisioning jobs support idempotency keys, retry backoff, and dead-letter state.
 - `PROVISIONING_QUEUE_BACKEND=database` uses only Postgres/in-memory queue state.
-- `PROVISIONING_QUEUE_BACKEND=storage_queue` wraps the base queue with Azure Storage Queue signaling when `AZURE_STORAGE_QUEUE_CONNECTION_STRING` is configured.
-- `PROVISIONING_QUEUE_BACKEND=service_bus` wraps the base queue with Azure Service Bus signaling when `AZURE_SERVICE_BUS_CONNECTION_STRING` is configured.
+- `PROVISIONING_QUEUE_BACKEND=storage_queue` wraps the base queue with Azure Storage Queue signaling:
+  - MI/RBAC path: set `AZURE_STORAGE_QUEUE_ACCOUNT_URL` and keep `AZURE_USE_MANAGED_IDENTITY=true`.
+  - Connection-string path: set `AZURE_STORAGE_QUEUE_CONNECTION_STRING` and `ALLOW_API_KEY_FALLBACK=true`.
+- `PROVISIONING_QUEUE_BACKEND=service_bus` wraps the base queue with Azure Service Bus signaling:
+  - MI/RBAC path: set `AZURE_SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and keep `AZURE_USE_MANAGED_IDENTITY=true`.
+  - Connection-string path: set `AZURE_SERVICE_BUS_CONNECTION_STRING` and `ALLOW_API_KEY_FALLBACK=true`.
 
 ## Admin auth and RBAC
 

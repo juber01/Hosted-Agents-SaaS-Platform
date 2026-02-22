@@ -27,6 +27,10 @@ Assign these to the app and worker managed identities (least privilege):
 - Keep `ALLOW_API_KEY_FALLBACK=false` in production.
 - Scope RBAC assignments to the minimal resource scope needed.
 - Audit all role assignments and admin changes.
+- For queue backends, prefer MI endpoints:
+  - Storage Queue: `AZURE_STORAGE_QUEUE_ACCOUNT_URL`
+  - Service Bus: `AZURE_SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`
+- Use queue connection strings only for temporary non-production fallback with `ALLOW_API_KEY_FALLBACK=true`.
 
 ## Admin API authorization
 

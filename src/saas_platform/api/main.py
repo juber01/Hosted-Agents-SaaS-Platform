@@ -147,9 +147,26 @@ def _resolve_queue_backend(settings: Settings, base_queue: ProvisioningQueue) ->
         return base_queue
 
     if backend == "storage_queue":
+        from saas_platform.adapters.queue import StorageQueueProvisioningQueue
+
+        if settings.azure_use_managed_identity:
+            if not settings.azure_storage_queue_account_url:
+                return base_queue
+            credential = _managed_identity_credential(settings)
+            return StorageQueueProvisioningQueue(
+                delegate=base_queue,
+                account_url=settings.azure_storage_queue_account_url,
+                credential=credential,
+                queue_name=settings.azure_storage_queue_name,
+                dead_letter_queue_name=settings.azure_storage_queue_dead_letter_queue_name,
+            )
+
+        if not settings.allow_api_key_fallback:
+            raise RuntimeError(
+                "Storage queue backend requires managed identity or explicit API-key fallback allowance."
+            )
         if not settings.azure_storage_queue_connection_string:
             return base_queue
-        from saas_platform.adapters.queue import StorageQueueProvisioningQueue
 
         return StorageQueueProvisioningQueue(
             delegate=base_queue,
@@ -159,9 +176,26 @@ def _resolve_queue_backend(settings: Settings, base_queue: ProvisioningQueue) ->
         )
 
     if backend == "service_bus":
+        from saas_platform.adapters.queue import ServiceBusProvisioningQueue
+
+        if settings.azure_use_managed_identity:
+            if not settings.azure_service_bus_fully_qualified_namespace:
+                return base_queue
+            credential = _managed_identity_credential(settings)
+            return ServiceBusProvisioningQueue(
+                delegate=base_queue,
+                fully_qualified_namespace=settings.azure_service_bus_fully_qualified_namespace,
+                credential=credential,
+                queue_name=settings.azure_service_bus_queue_name,
+                dead_letter_queue_name=settings.azure_service_bus_dead_letter_queue_name,
+            )
+
+        if not settings.allow_api_key_fallback:
+            raise RuntimeError(
+                "Service Bus backend requires managed identity or explicit API-key fallback allowance."
+            )
         if not settings.azure_service_bus_connection_string:
             return base_queue
-        from saas_platform.adapters.queue import ServiceBusProvisioningQueue
 
         return ServiceBusProvisioningQueue(
             delegate=base_queue,
@@ -171,6 +205,16 @@ def _resolve_queue_backend(settings: Settings, base_queue: ProvisioningQueue) ->
         )
 
     raise RuntimeError(f"Unsupported PROVISIONING_QUEUE_BACKEND: {settings.provisioning_queue_backend}")
+
+
+def _managed_identity_credential(settings: Settings):
+    try:
+        from azure.identity import DefaultAzureCredential
+    except ModuleNotFoundError as err:
+        raise RuntimeError("Managed identity queue backend requires 'azure-identity'.") from err
+
+    client_id = settings.azure_managed_identity_client_id.strip() or None
+    return DefaultAzureCredential(managed_identity_client_id=client_id)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

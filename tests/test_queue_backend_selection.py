@@ -16,9 +16,11 @@ def _settings(**overrides) -> Settings:
         provisioning_worker_poll_seconds=1,
         provisioning_job_max_attempts=3,
         provisioning_retry_base_seconds=0,
+        azure_storage_queue_account_url="",
         azure_storage_queue_connection_string="",
         azure_storage_queue_name="provisioning-jobs",
         azure_storage_queue_dead_letter_queue_name="provisioning-jobs-deadletter",
+        azure_service_bus_fully_qualified_namespace="",
         azure_service_bus_connection_string="",
         azure_service_bus_queue_name="provisioning-jobs",
         azure_service_bus_dead_letter_queue_name="provisioning-jobs-deadletter",
@@ -74,26 +76,88 @@ def test_service_bus_backend_falls_back_without_connection_string() -> None:
     assert app.state.ctx.queue.__class__.__name__ == "InMemoryProvisioningQueue"
 
 
-def test_storage_queue_backend_wraps_base_queue_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_storage_queue_backend_wraps_with_managed_identity_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     import saas_platform.adapters.queue as queue_mod
+    import saas_platform.api.main as main_mod
 
     monkeypatch.setattr(queue_mod, "StorageQueueProvisioningQueue", _NoopWrapper)
+    monkeypatch.setattr(main_mod, "_managed_identity_credential", lambda _settings: object())
     app = create_app(
         _settings(
             provisioning_queue_backend="storage_queue",
+            azure_storage_queue_account_url="https://example.queue.core.windows.net",
+            azure_use_managed_identity=True,
+        )
+    )
+    assert isinstance(app.state.ctx.queue, _NoopWrapper)
+
+
+def test_service_bus_backend_wraps_with_managed_identity_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    import saas_platform.adapters.queue as queue_mod
+    import saas_platform.api.main as main_mod
+
+    monkeypatch.setattr(queue_mod, "ServiceBusProvisioningQueue", _NoopWrapper)
+    monkeypatch.setattr(main_mod, "_managed_identity_credential", lambda _settings: object())
+    app = create_app(
+        _settings(
+            provisioning_queue_backend="service_bus",
+            azure_service_bus_fully_qualified_namespace="example.servicebus.windows.net",
+            azure_use_managed_identity=True,
+        )
+    )
+    assert isinstance(app.state.ctx.queue, _NoopWrapper)
+
+
+def test_storage_queue_connection_string_requires_explicit_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    import saas_platform.adapters.queue as queue_mod
+
+    monkeypatch.setattr(queue_mod, "StorageQueueProvisioningQueue", _NoopWrapper)
+
+    with pytest.raises(RuntimeError):
+        create_app(
+            _settings(
+                provisioning_queue_backend="storage_queue",
+                azure_use_managed_identity=False,
+                allow_api_key_fallback=False,
+                azure_storage_queue_connection_string="UseDevelopmentStorage=true;",
+            )
+        )
+
+    app = create_app(
+        _settings(
+            provisioning_queue_backend="storage_queue",
+            azure_use_managed_identity=False,
+            allow_api_key_fallback=True,
+            azure_ai_project_api_key="fallback-key",
             azure_storage_queue_connection_string="UseDevelopmentStorage=true;",
         )
     )
     assert isinstance(app.state.ctx.queue, _NoopWrapper)
 
 
-def test_service_bus_backend_wraps_base_queue_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_service_bus_connection_string_requires_explicit_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     import saas_platform.adapters.queue as queue_mod
 
     monkeypatch.setattr(queue_mod, "ServiceBusProvisioningQueue", _NoopWrapper)
+
+    with pytest.raises(RuntimeError):
+        create_app(
+            _settings(
+                provisioning_queue_backend="service_bus",
+                azure_use_managed_identity=False,
+                allow_api_key_fallback=False,
+                azure_service_bus_connection_string=(
+                    "Endpoint=sb://local/;SharedAccessKeyName=test;SharedAccessKey=x"
+                ),
+            )
+        )
+
     app = create_app(
         _settings(
             provisioning_queue_backend="service_bus",
+            azure_use_managed_identity=False,
+            allow_api_key_fallback=True,
+            azure_ai_project_api_key="fallback-key",
             azure_service_bus_connection_string="Endpoint=sb://local/;SharedAccessKeyName=test;SharedAccessKey=x",
         )
     )

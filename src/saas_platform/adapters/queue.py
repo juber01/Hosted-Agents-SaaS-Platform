@@ -15,8 +15,10 @@ class StorageQueueProvisioningQueue(ProvisioningQueue):
         self,
         *,
         delegate: ProvisioningQueue,
-        connection_string: str,
         queue_name: str,
+        connection_string: str | None = None,
+        account_url: str | None = None,
+        credential: Any | None = None,
         dead_letter_queue_name: str | None = None,
         visibility_timeout_seconds: int = 30,
     ) -> None:
@@ -33,7 +35,14 @@ class StorageQueueProvisioningQueue(ProvisioningQueue):
                 "Storage queue backend requires 'azure-storage-queue'. Install dependencies before use."
             ) from err
 
-        service = QueueServiceClient.from_connection_string(connection_string)
+        if connection_string:
+            service = QueueServiceClient.from_connection_string(connection_string)
+        elif account_url and credential is not None:
+            service = QueueServiceClient(account_url=account_url, credential=credential)
+        else:
+            raise RuntimeError(
+                "StorageQueueProvisioningQueue requires either connection_string or account_url+credential."
+            )
         self._queue_client = service.get_queue_client(queue_name)
         self._dead_letter_client = service.get_queue_client(self._dead_letter_queue_name)
 
@@ -100,8 +109,10 @@ class ServiceBusProvisioningQueue(ProvisioningQueue):
         self,
         *,
         delegate: ProvisioningQueue,
-        connection_string: str,
         queue_name: str,
+        connection_string: str | None = None,
+        fully_qualified_namespace: str | None = None,
+        credential: Any | None = None,
         dead_letter_queue_name: str | None = None,
     ) -> None:
         self._delegate = delegate
@@ -113,7 +124,17 @@ class ServiceBusProvisioningQueue(ProvisioningQueue):
         except ModuleNotFoundError as err:
             raise RuntimeError("Service Bus backend requires 'azure-servicebus'. Install dependencies first.") from err
 
-        self._client = ServiceBusClient.from_connection_string(connection_string)
+        if connection_string:
+            self._client = ServiceBusClient.from_connection_string(connection_string)
+        elif fully_qualified_namespace and credential is not None:
+            self._client = ServiceBusClient(
+                fully_qualified_namespace=fully_qualified_namespace,
+                credential=credential,
+            )
+        else:
+            raise RuntimeError(
+                "ServiceBusProvisioningQueue requires either connection_string or fully_qualified_namespace+credential."
+            )
 
     def enqueue(self, job: ProvisioningJob) -> None:
         self._delegate.enqueue(job)

@@ -16,9 +16,11 @@ class Settings:
     provisioning_worker_poll_seconds: int
     provisioning_job_max_attempts: int
     provisioning_retry_base_seconds: int
+    azure_storage_queue_account_url: str
     azure_storage_queue_connection_string: str
     azure_storage_queue_name: str
     azure_storage_queue_dead_letter_queue_name: str
+    azure_service_bus_fully_qualified_namespace: str
     azure_service_bus_connection_string: str
     azure_service_bus_queue_name: str
     azure_service_bus_dead_letter_queue_name: str
@@ -79,11 +81,13 @@ def get_settings() -> Settings:
         provisioning_worker_poll_seconds=int(os.getenv("PROVISIONING_WORKER_POLL_SECONDS", "2")),
         provisioning_job_max_attempts=int(os.getenv("PROVISIONING_JOB_MAX_ATTEMPTS", "3")),
         provisioning_retry_base_seconds=int(os.getenv("PROVISIONING_RETRY_BASE_SECONDS", "5")),
+        azure_storage_queue_account_url=os.getenv("AZURE_STORAGE_QUEUE_ACCOUNT_URL", ""),
         azure_storage_queue_connection_string=os.getenv("AZURE_STORAGE_QUEUE_CONNECTION_STRING", ""),
         azure_storage_queue_name=os.getenv("AZURE_STORAGE_QUEUE_NAME", "provisioning-jobs"),
         azure_storage_queue_dead_letter_queue_name=os.getenv(
             "AZURE_STORAGE_QUEUE_DEAD_LETTER_QUEUE_NAME", "provisioning-jobs-deadletter"
         ),
+        azure_service_bus_fully_qualified_namespace=os.getenv("AZURE_SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", ""),
         azure_service_bus_connection_string=os.getenv("AZURE_SERVICE_BUS_CONNECTION_STRING", ""),
         azure_service_bus_queue_name=os.getenv("AZURE_SERVICE_BUS_QUEUE_NAME", "provisioning-jobs"),
         azure_service_bus_dead_letter_queue_name=os.getenv(
