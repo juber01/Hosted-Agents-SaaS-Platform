@@ -280,3 +280,35 @@ def test_admin_tenant_scope_enforced() -> None:
         headers=_admin_headers(secret=secret, roles=["tenant_admin"], tenant_ids=["tenant-a"]),
     )
     assert allowed.status_code == 200
+
+
+def test_admin_scope_only_tokens_follow_entra_mapping() -> None:
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(_settings(jwt_shared_secret=secret))
+    client = TestClient(app)
+
+    plans = client.get(
+        "/v1/admin/plans",
+        headers=_admin_headers(secret=secret, scopes=["plans.read"]),
+    )
+    assert plans.status_code == 200
+
+    create = client.post(
+        "/v1/admin/plans",
+        headers=_admin_headers(secret=secret, scopes=["plans.write"]),
+        json={
+            "plan_id": "scope-plan",
+            "display_name": "Scope Plan",
+            "monthly_messages": 100,
+            "monthly_token_cap": 10000,
+            "max_agents": 2,
+            "active": True,
+        },
+    )
+    assert create.status_code == 201
+
+    export = client.get(
+        "/v1/admin/usage/export",
+        headers=_admin_headers(secret=secret, scopes=["billing.read"]),
+    )
+    assert export.status_code == 200

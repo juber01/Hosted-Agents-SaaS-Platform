@@ -27,3 +27,10 @@ Assign these to the app and worker managed identities (least privilege):
 - Keep `ALLOW_API_KEY_FALLBACK=false` in production.
 - Scope RBAC assignments to the minimal resource scope needed.
 - Audit all role assignments and admin changes.
+
+## Admin API authorization
+
+- `/v1/admin/*` endpoints require JWT bearer authentication.
+- Authorization uses Entra-style role/scope claims mapped to endpoint permissions.
+- Use the explicit contract in:
+  - `docs/ENTRA_ADMIN_RBAC_CONTRACT.md`

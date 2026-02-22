@@ -66,3 +66,5 @@ uvicorn saas_platform.api.main:app --app-dir src --reload --port 8080
   - `roles` includes `platform_admin` (global bypass)
   - `tenant_ids` contains the path tenant id (or `*`)
   - `tenant_id`/`tid` matches the path tenant id
+- Full Entra mapping contract:
+  - `docs/ENTRA_ADMIN_RBAC_CONTRACT.md`
