@@ -34,7 +34,7 @@ from saas_platform.domain.models import (
 )
 from saas_platform.policies.auth import AdminAuthService, AdminPrincipal, TenantAuthService, tenant_headers
 from saas_platform.policies.quota import QuotaCounter, QuotaPolicy, allow_request
-from saas_platform.policies.rate_limit import FixedWindowRateLimiter
+from saas_platform.policies.rate_limit import FixedWindowRateLimiter, RateLimiter, RedisFixedWindowRateLimiter
 from saas_platform.provisioning.worker import process_next_job
 from saas_platform.telemetry import span_record_error, span_set_attributes, start_span, telemetry_tags
 
@@ -48,7 +48,7 @@ class AppContext:
     usage: UsageMeter
     auth: TenantAuthService
     admin_auth: AdminAuthService
-    limiter: FixedWindowRateLimiter
+    limiter: RateLimiter
     gateway: FoundryAgentGateway
 
 
@@ -126,6 +126,7 @@ def _build_context(settings: Settings) -> AppContext:
         usage = InMemoryUsageMeter()
 
     queue = _resolve_queue_backend(settings=settings, base_queue=queue)
+    limiter = _resolve_rate_limiter(settings=settings)
 
     _seed_default_plans(plans)
 
@@ -137,7 +138,7 @@ def _build_context(settings: Settings) -> AppContext:
         usage=usage,
         auth=TenantAuthService(settings),
         admin_auth=AdminAuthService(settings),
-        limiter=FixedWindowRateLimiter(settings.default_rate_limit_rpm),
+        limiter=limiter,
         gateway=FoundryAgentGateway(settings),
     )
 
@@ -216,6 +217,24 @@ def _managed_identity_credential(settings: Settings):
 
     client_id = settings.azure_managed_identity_client_id.strip() or None
     return DefaultAzureCredential(managed_identity_client_id=client_id)
+
+
+def _resolve_rate_limiter(settings: Settings) -> RateLimiter:
+    backend = (settings.rate_limit_backend or "").strip().lower()
+    if backend in {"", "memory"}:
+        return FixedWindowRateLimiter(settings.default_rate_limit_rpm)
+
+    if backend == "redis":
+        if not settings.rate_limit_redis_url:
+            return FixedWindowRateLimiter(settings.default_rate_limit_rpm)
+        return RedisFixedWindowRateLimiter(
+            requests_per_minute=settings.default_rate_limit_rpm,
+            redis_url=settings.rate_limit_redis_url,
+            key_prefix=settings.rate_limit_redis_key_prefix,
+            fail_open=settings.rate_limit_redis_fail_open,
+        )
+
+    raise RuntimeError(f"Unsupported RATE_LIMIT_BACKEND: {settings.rate_limit_backend}")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

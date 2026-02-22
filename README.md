@@ -76,6 +76,10 @@ saas-platform-worker --once
 - `PROVISIONING_QUEUE_BACKEND=service_bus` wraps the base queue with Azure Service Bus signaling:
   - MI/RBAC path: set `AZURE_SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and keep `AZURE_USE_MANAGED_IDENTITY=true`.
   - Connection-string path: set `AZURE_SERVICE_BUS_CONNECTION_STRING` and `ALLOW_API_KEY_FALLBACK=true`.
+- Rate limiting backend:
+  - `RATE_LIMIT_BACKEND=memory` keeps per-instance in-memory limiting.
+  - `RATE_LIMIT_BACKEND=redis` enables distributed fixed-window limiting via `RATE_LIMIT_REDIS_URL`.
+  - `RATE_LIMIT_REDIS_FAIL_OPEN=true` allows requests if Redis is unavailable (availability-first mode).
 
 ## Admin auth and RBAC
 

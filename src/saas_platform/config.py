@@ -31,6 +31,10 @@ class Settings:
     allow_api_key_fallback: bool
     key_vault_url: str
     tenant_api_keys: dict[str, str]
+    rate_limit_backend: str
+    rate_limit_redis_url: str
+    rate_limit_redis_key_prefix: str
+    rate_limit_redis_fail_open: bool
     jwt_jwks_url: str
     jwt_issuer: str
     jwt_audience: str
@@ -104,6 +108,10 @@ def get_settings() -> Settings:
         allow_api_key_fallback=_parse_bool(os.getenv("ALLOW_API_KEY_FALLBACK", "false"), default=False),
         key_vault_url=os.getenv("KEY_VAULT_URL", ""),
         tenant_api_keys=_parse_tenant_api_keys(os.getenv("TENANT_API_KEYS_JSON", "")),
+        rate_limit_backend=os.getenv("RATE_LIMIT_BACKEND", "memory"),
+        rate_limit_redis_url=os.getenv("RATE_LIMIT_REDIS_URL", ""),
+        rate_limit_redis_key_prefix=os.getenv("RATE_LIMIT_REDIS_KEY_PREFIX", "saas:ratelimit"),
+        rate_limit_redis_fail_open=_parse_bool(os.getenv("RATE_LIMIT_REDIS_FAIL_OPEN", "true"), default=True),
         jwt_jwks_url=os.getenv("JWT_JWKS_URL", ""),
         jwt_issuer=os.getenv("JWT_ISSUER", ""),
         jwt_audience=os.getenv("JWT_AUDIENCE", ""),
