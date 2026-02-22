@@ -62,6 +62,9 @@
     "redisEnabled": {
       "value": true
     },
+    "redisManagedSkuName": {
+      "value": "MemoryOptimized_M10"
+    },
     "provisioningWorkerPollSeconds": {
       "value": 2
     },
@@ -70,15 +73,6 @@
     },
     "provisioningDeadLetterQueueName": {
       "value": "provisioning-jobs-deadletter"
-    },
-    "redisSkuFamily": {
-      "value": "C"
-    },
-    "redisSkuName": {
-      "value": "Basic"
-    },
-    "redisCapacity": {
-      "value": 1
     },
     "apiMinReplicas": {
       "value": 1

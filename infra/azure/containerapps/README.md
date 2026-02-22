@@ -7,7 +7,7 @@ This folder contains step `#1` infrastructure scaffolding for split deployment:
 - Managed identities (UAMI) for API and worker
 - Key Vault (RBAC mode)
 - Postgres flexible server + app DB
-- Redis cache for distributed rate limiting
+- Azure Managed Redis cache for distributed rate limiting
 - Storage queue resources for provisioning signals
 - Optional Service Bus namespace/queues
 - Container Apps environment + Log Analytics + Application Insights
@@ -90,7 +90,9 @@ Expected response:
 
 - Managed identity + RBAC is used where supported by adapters (`Storage Queue`, `Service Bus`, `Key Vault`, `Foundry`).
 - `allowApiKeyFallback` should stay `false` in production.
-- If Redis deployment fails in your subscription constraints, set `redisEnabled=false` and the app will fall back to in-memory rate limiting.
+- Redis guidance:
+  - Start with `redisManagedSkuName=MemoryOptimized_M10` for SMB session/app cache workloads.
+  - If Redis deployment is intentionally disabled (`redisEnabled=false`), the app falls back to in-memory rate limiting.
 - `queueBackend` options:
   - `database`
   - `storage_queue` (default)

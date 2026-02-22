@@ -69,6 +69,9 @@ param defaultRateLimitRpm int = 60
 @description('Enable Azure Cache for Redis deployment.')
 param redisEnabled bool = true
 
+@description('Azure Managed Redis SKU name. For SMB session/app cache start with MemoryOptimized_M10.')
+param redisManagedSkuName string = 'MemoryOptimized_M10'
+
 @description('Provisioning worker poll interval in seconds.')
 param provisioningWorkerPollSeconds int = 2
 
@@ -77,15 +80,6 @@ param provisioningQueueName string = 'provisioning-jobs'
 
 @description('Provisioning dead-letter queue name.')
 param provisioningDeadLetterQueueName string = 'provisioning-jobs-deadletter'
-
-@description('Redis SKU family.')
-param redisSkuFamily string = 'C'
-
-@description('Redis SKU name.')
-param redisSkuName string = 'Basic'
-
-@description('Redis capacity.')
-param redisCapacity int = 1
 
 @description('API min replicas.')
 param apiMinReplicas int = 1
@@ -130,12 +124,13 @@ var appInsightsName = '${prefix}-appi'
 var managedEnvName = '${prefix}-cae'
 var keyVaultName = take(toLower(replace('${prefix}-kv-${suffix}', '-', '')), 24)
 var storageName = take(toLower(replace('${prefix}st${suffix}', '-', '')), 24)
-var redisName = take(toLower(replace('${prefix}-redis-${suffix}', '-', '')), 63)
+var redisName = take(toLower('${prefix}-mredis'), 63)
 var serviceBusName = take(toLower(replace('${prefix}-sb-${suffix}', '-', '')), 50)
 var postgresName = take(toLower(replace('${prefix}-pg-${suffix}', '-', '')), 63)
 var postgresStorageGb = max(32, int(postgresStorageMb / 1024))
 var tenantCatalogDsn = 'postgresql+psycopg://${postgresAdminUser}:${postgresAdminPassword}@${postgresName}.postgres.database.azure.com:5432/${postgresDatabaseName}?sslmode=require'
-var redisUrl = redisEnabled ? 'redis://:${listKeys(redis!.id, redis!.apiVersion).primaryKey}@${redis!.properties.hostName}:6380/0?ssl=true' : 'redis://disabled'
+var redisPrimaryKey = redisEnabled ? listKeys(redisDatabase!.id, redisDatabase!.apiVersion).primaryKey : ''
+var redisUrl = redisEnabled ? 'rediss://:${redisPrimaryKey}@${redisManaged!.properties.hostName}:10000/0' : 'redis://disabled'
 var storageQueueAccountUrl = 'https://${storage.name}.queue.${environment().suffixes.storage}'
 var serviceBusNamespace = serviceBusEnabled ? '${serviceBus.name}.servicebus.windows.net' : ''
 var keyVaultUrl = 'https://${keyVault.name}${environment().suffixes.keyvaultDns}'
@@ -268,17 +263,27 @@ resource serviceBusDeadLetterQueue 'Microsoft.ServiceBus/namespaces/queues@2022-
   }
 }
 
-resource redis 'Microsoft.Cache/Redis@2023-08-01' = if (redisEnabled) {
+resource redisManaged 'Microsoft.Cache/redisEnterprise@2025-07-01' = if (redisEnabled) {
   name: redisName
   location: location
-  properties: {
-    enableNonSslPort: false
-    minimumTlsVersion: '1.2'
-  }
   sku: {
-    family: redisSkuFamily
-    name: redisSkuName
-    capacity: redisCapacity
+    name: redisManagedSkuName
+  }
+  properties: {
+    minimumTlsVersion: '1.2'
+    highAvailability: 'Enabled'
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource redisDatabase 'Microsoft.Cache/redisEnterprise/databases@2025-07-01' = if (redisEnabled) {
+  parent: redisManaged
+  name: 'default'
+  properties: {
+    clientProtocol: 'Encrypted'
+    clusteringPolicy: 'OSSCluster'
+    evictionPolicy: 'AllKeysLRU'
+    port: 10000
   }
 }
 
@@ -596,6 +601,6 @@ output keyVaultName string = keyVault.name
 output keyVaultUrl string = keyVaultUrl
 output postgresServerName string = postgres.name
 output postgresDatabaseName string = postgresDb.name
-output redisHostName string = redisEnabled ? redis!.properties.hostName : ''
+output redisHostName string = redisEnabled ? redisManaged!.properties.hostName : ''
 output storageAccountName string = storage.name
 output serviceBusNamespace string = serviceBusEnabled ? serviceBus.name : ''
