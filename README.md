@@ -88,3 +88,9 @@ saas-platform-worker --once
   - `tenant_id`/`tid` matches the path tenant id
 - Full Entra mapping contract:
   - `docs/ENTRA_ADMIN_RBAC_CONTRACT.md`
+
+## Observability
+
+- API and worker paths emit OpenTelemetry spans when an OTel tracer provider/exporter is configured.
+- Shared attributes include tenant, agent, plan, request/job ids, latency, token counts, cost estimate, and failure type.
+- Worker retry/dead-letter transitions emit structured JSON log events for operational triage.

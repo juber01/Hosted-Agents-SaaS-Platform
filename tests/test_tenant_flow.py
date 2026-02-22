@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from contextlib import contextmanager
 import jwt
 
 from saas_platform.api.main import create_app
@@ -323,3 +324,45 @@ def test_admin_scope_only_tokens_follow_entra_mapping() -> None:
         headers=_admin_headers(secret=secret, scopes=["billing.read"]),
     )
     assert export.status_code == 200
+
+
+def test_api_execute_run_starts_telemetry_span(monkeypatch) -> None:
+    settings = _settings(allow_api_key_fallback=True, default_rate_limit_rpm=20)
+    app = create_app(settings)
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
+    )
+
+    spans: list[str] = []
+
+    class _Span:
+        def set_attribute(self, _key: str, _value: object) -> None:
+            return
+
+        def record_exception(self, _err: BaseException) -> None:
+            return
+
+        def set_status(self, _status: object) -> None:
+            return
+
+    @contextmanager
+    def _fake_start_span(name: str, _attributes: dict[str, object] | None = None):
+        spans.append(name)
+        yield _Span()
+
+    import saas_platform.api.main as main_mod
+
+    monkeypatch.setattr(main_mod, "start_span", _fake_start_span)
+
+    client = TestClient(app)
+    run = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers={
+            "X-Tenant-Id": "tenant-dev",
+            "X-Customer-Id": "user-1",
+            "X-Api-Key": "dev-key-123",
+        },
+        json={"agent_id": "support", "user_id": "user-1", "message": "telemetry test"},
+    )
+    assert run.status_code == 200
+    assert "api.runs.execute" in spans

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import logging
+
+import pytest
+
 from saas_platform.adapters.storage import InMemoryProvisioningQueue, InMemoryTenantCatalog
 from saas_platform.domain.models import ProvisioningJob, Tenant
 from saas_platform.provisioning.worker import process_next_job
@@ -122,3 +127,73 @@ def test_provisioning_queue_idempotency_key_deduplicates_jobs() -> None:
 
     assert queue.get_job("job-4a") is not None
     assert queue.get_job("job-4b") is None
+
+
+def test_provisioning_worker_emits_structured_retry_and_dead_letter_logs(caplog: pytest.LogCaptureFixture) -> None:
+    queue = InMemoryProvisioningQueue()
+    catalog = InMemoryTenantCatalog()
+    catalog.upsert_tenant(Tenant(tenant_id="tenant-4", name="Delta", plan="starter", status="active"))
+
+    original_get_tenant = catalog.get_tenant
+
+    def _failing_get_tenant(_tenant_id: str) -> Tenant | None:
+        raise RuntimeError("log-test-failure")
+
+    catalog.get_tenant = _failing_get_tenant  # type: ignore[method-assign]
+    queue.enqueue(
+        ProvisioningJob(
+            job_id="job-5",
+            tenant_id="tenant-4",
+            step="bootstrap",
+            idempotency_key="tenant-4:bootstrap",
+            max_attempts=2,
+        )
+    )
+
+    caplog.set_level(logging.INFO)
+    process_next_job(queue=queue, catalog=catalog, default_max_attempts=2, retry_base_seconds=0)
+    process_next_job(queue=queue, catalog=catalog, default_max_attempts=2, retry_base_seconds=0)
+    catalog.get_tenant = original_get_tenant  # type: ignore[method-assign]
+
+    logged = "\n".join(record.message for record in caplog.records)
+    assert "provisioning_job_retry" in logged
+    assert "provisioning_job_dead_letter" in logged
+    assert "tenant-4" in logged
+
+
+def test_provisioning_worker_starts_telemetry_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = InMemoryProvisioningQueue()
+    catalog = InMemoryTenantCatalog()
+    catalog.upsert_tenant(Tenant(tenant_id="tenant-5", name="Echo", plan="starter", status="pending"))
+    queue.enqueue(
+        ProvisioningJob(
+            job_id="job-6",
+            tenant_id="tenant-5",
+            step="bootstrap",
+            idempotency_key="tenant-5:bootstrap",
+            max_attempts=3,
+        )
+    )
+
+    spans: list[str] = []
+
+    class _Span:
+        def set_attribute(self, _key: str, _value: object) -> None:
+            return
+
+        def record_exception(self, _err: BaseException) -> None:
+            return
+
+        def set_status(self, _status: object) -> None:
+            return
+
+    @contextmanager
+    def _fake_start_span(name: str, _attributes: dict[str, object] | None = None):
+        spans.append(name)
+        yield _Span()
+
+    import saas_platform.provisioning.worker as worker_mod
+
+    monkeypatch.setattr(worker_mod, "start_span", _fake_start_span)
+    process_next_job(queue=queue, catalog=catalog, default_max_attempts=3, retry_base_seconds=0)
+    assert "worker.provisioning.process" in spans

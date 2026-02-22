@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 import re
 from uuid import uuid4
 
@@ -35,7 +36,7 @@ from saas_platform.policies.auth import AdminAuthService, AdminPrincipal, Tenant
 from saas_platform.policies.quota import QuotaCounter, QuotaPolicy, allow_request
 from saas_platform.policies.rate_limit import FixedWindowRateLimiter
 from saas_platform.provisioning.worker import process_next_job
-from saas_platform.telemetry import telemetry_tags
+from saas_platform.telemetry import span_record_error, span_set_attributes, start_span, telemetry_tags
 
 
 @dataclass
@@ -311,25 +312,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/tenants", response_model=CreateTenantResponse, status_code=201)
     def create_tenant(request: CreateTenantRequest) -> CreateTenantResponse:
-        selected_plan = ctx.plans.get_plan(request.plan)
-        if selected_plan is None or not selected_plan.active:
-            raise HTTPException(status_code=400, detail="invalid or inactive plan")
+        with start_span(
+            "api.tenants.create",
+            {
+                "plan": request.plan,
+                "environment": ctx.settings.app_env,
+            },
+        ) as span:
+            selected_plan = ctx.plans.get_plan(request.plan)
+            if selected_plan is None or not selected_plan.active:
+                err = HTTPException(status_code=400, detail="invalid or inactive plan")
+                span_set_attributes(span, telemetry_tags(plan=request.plan, failure_type="invalid_plan"))
+                raise err
 
-        tenant_id = str(uuid4())
-        job_id = str(uuid4())
+            tenant_id = str(uuid4())
+            job_id = str(uuid4())
 
-        ctx.catalog.upsert_tenant(Tenant(tenant_id=tenant_id, name=request.name, plan=request.plan))
-        ctx.queue.enqueue(
-            ProvisioningJob(
-                job_id=job_id,
-                tenant_id=tenant_id,
-                step="bootstrap",
-                idempotency_key=f"{tenant_id}:bootstrap",
-                max_attempts=ctx.settings.provisioning_job_max_attempts,
+            ctx.catalog.upsert_tenant(Tenant(tenant_id=tenant_id, name=request.name, plan=request.plan))
+            ctx.queue.enqueue(
+                ProvisioningJob(
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    step="bootstrap",
+                    idempotency_key=f"{tenant_id}:bootstrap",
+                    max_attempts=ctx.settings.provisioning_job_max_attempts,
+                )
             )
-        )
-
-        return CreateTenantResponse(tenant_id=tenant_id, status="pending", provisioning_job_id=job_id)
+            span_set_attributes(span, telemetry_tags(tenant_id=tenant_id, job_id=job_id, plan=request.plan))
+            return CreateTenantResponse(tenant_id=tenant_id, status="pending", provisioning_job_id=job_id)
 
     @app.get("/v1/tenants/{tenant_id}")
     def get_tenant(tenant_id: str) -> dict:
@@ -395,13 +405,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/provisioning/jobs/run-next")
     def run_next_provisioning_job() -> dict[str, bool]:
-        processed = process_next_job(
-            queue=ctx.queue,
-            catalog=ctx.catalog,
-            default_max_attempts=ctx.settings.provisioning_job_max_attempts,
-            retry_base_seconds=ctx.settings.provisioning_retry_base_seconds,
-        )
-        return {"processed": processed}
+        with start_span("api.provisioning.run_next", {"environment": ctx.settings.app_env}) as span:
+            processed = process_next_job(
+                queue=ctx.queue,
+                catalog=ctx.catalog,
+                default_max_attempts=ctx.settings.provisioning_job_max_attempts,
+                retry_base_seconds=ctx.settings.provisioning_retry_base_seconds,
+            )
+            span_set_attributes(span, {"provisioning.processed": processed})
+            return {"processed": processed}
 
     @app.post("/v1/tenants/{tenant_id}/runs", response_model=ExecuteRunResponse)
     def execute_run(
@@ -410,67 +422,105 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         headers: tuple[str, str, str, str] = Depends(tenant_headers),
     ) -> ExecuteRunResponse:
         x_tenant_id, x_customer_id, x_api_key, authorization = headers
-        tenant_ctx = ctx.auth.authenticate(
-            path_tenant_id=tenant_id,
-            x_tenant_id=x_tenant_id,
-            x_customer_id=x_customer_id,
-            x_api_key=x_api_key,
-            authorization=authorization,
-        )
+        with start_span(
+            "api.runs.execute",
+            {
+                "tenant_id": tenant_id,
+                "agent_id": request.agent_id,
+                "environment": ctx.settings.app_env,
+            },
+        ) as span:
+            started = perf_counter()
+            try:
+                tenant_ctx = ctx.auth.authenticate(
+                    path_tenant_id=tenant_id,
+                    x_tenant_id=x_tenant_id,
+                    x_customer_id=x_customer_id,
+                    x_api_key=x_api_key,
+                    authorization=authorization,
+                )
 
-        tenant = ctx.catalog.get_tenant(tenant_id)
-        if tenant is None:
-            raise HTTPException(status_code=404, detail="tenant not found")
-        if tenant.status != "active":
-            raise HTTPException(status_code=409, detail="tenant is not active yet")
-        plan = ctx.plans.get_plan(tenant.plan)
-        if plan is None or not plan.active:
-            raise HTTPException(status_code=409, detail="tenant plan is invalid or inactive")
+                tenant = ctx.catalog.get_tenant(tenant_id)
+                if tenant is None:
+                    raise HTTPException(status_code=404, detail="tenant not found")
+                if tenant.status != "active":
+                    raise HTTPException(status_code=409, detail="tenant is not active yet")
+                plan = ctx.plans.get_plan(tenant.plan)
+                if plan is None or not plan.active:
+                    raise HTTPException(status_code=409, detail="tenant plan is invalid or inactive")
 
-        rate_key = f"{tenant_ctx.tenant_id}:{request.agent_id}"
-        if not ctx.limiter.allow(rate_key):
-            raise HTTPException(status_code=429, detail="tenant rate limit exceeded")
+                rate_key = f"{tenant_ctx.tenant_id}:{request.agent_id}"
+                if not ctx.limiter.allow(rate_key):
+                    raise HTTPException(status_code=429, detail="tenant rate limit exceeded")
 
-        month = _current_month_utc()
-        usage_summary = ctx.usage.summarize_tenant_month(tenant_id=tenant_id, month=month)
-        estimated_tokens = max(len(request.message) // 4, 1) * 2
-        policy = QuotaPolicy(
-            included_messages=plan.limits.monthly_messages,
-            hard_token_cap=plan.limits.monthly_token_cap,
-        )
-        counter = QuotaCounter(
-            messages_used=usage_summary.messages_used,
-            tokens_used=usage_summary.tokens_used,
-        )
-        if not allow_request(policy=policy, counter=counter, estimated_tokens=estimated_tokens):
-            raise HTTPException(status_code=429, detail="tenant monthly quota exceeded")
+                month = _current_month_utc()
+                usage_summary = ctx.usage.summarize_tenant_month(tenant_id=tenant_id, month=month)
+                estimated_tokens = max(len(request.message) // 4, 1) * 2
+                policy = QuotaPolicy(
+                    included_messages=plan.limits.monthly_messages,
+                    hard_token_cap=plan.limits.monthly_token_cap,
+                )
+                counter = QuotaCounter(
+                    messages_used=usage_summary.messages_used,
+                    tokens_used=usage_summary.tokens_used,
+                )
+                if not allow_request(policy=policy, counter=counter, estimated_tokens=estimated_tokens):
+                    raise HTTPException(status_code=429, detail="tenant monthly quota exceeded")
 
-        request_id = str(uuid4())
-        output_text = ctx.gateway.execute(tenant_id=tenant_id, agent_id=request.agent_id, message=request.message)
+                request_id = str(uuid4())
+                output_text = ctx.gateway.execute(
+                    tenant_id=tenant_id,
+                    agent_id=request.agent_id,
+                    message=request.message,
+                )
 
-        ctx.usage.record(
-            UsageEvent(
-                tenant_id=tenant_id,
-                agent_id=request.agent_id,
-                request_id=request_id,
-                model="provider-default",
-                latency_ms=0,
-                tokens_in=max(len(request.message) // 4, 1),
-                tokens_out=max(len(output_text) // 4, 1),
-                cost_estimate=0.0,
-            )
-        )
+                latency_ms = int((perf_counter() - started) * 1000)
+                tokens_in = max(len(request.message) // 4, 1)
+                tokens_out = max(len(output_text) // 4, 1)
+                cost_estimate = 0.0
 
-        _ = telemetry_tags(
-            tenant_id=tenant_id,
-            agent_id=request.agent_id,
-            request_id=request_id,
-            plan=tenant.plan,
-            model="provider-default",
-            environment=ctx.settings.app_env,
-        )
+                ctx.usage.record(
+                    UsageEvent(
+                        tenant_id=tenant_id,
+                        agent_id=request.agent_id,
+                        request_id=request_id,
+                        model="provider-default",
+                        latency_ms=latency_ms,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        cost_estimate=cost_estimate,
+                    )
+                )
 
-        return ExecuteRunResponse(tenant_id=tenant_id, request_id=request_id, output_text=output_text)
+                span_set_attributes(
+                    span,
+                    telemetry_tags(
+                        tenant_id=tenant_id,
+                        agent_id=request.agent_id,
+                        request_id=request_id,
+                        plan=tenant.plan,
+                        model="provider-default",
+                        environment=ctx.settings.app_env,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        cost_estimate=cost_estimate,
+                        latency_ms=latency_ms,
+                    ),
+                )
+                return ExecuteRunResponse(tenant_id=tenant_id, request_id=request_id, output_text=output_text)
+            except HTTPException as err:
+                span_set_attributes(
+                    span,
+                    telemetry_tags(
+                        tenant_id=tenant_id,
+                        agent_id=request.agent_id,
+                        failure_type=f"http_{err.status_code}",
+                    ),
+                )
+                raise
+            except Exception as err:
+                span_record_error(span, err, failure_type=err.__class__.__name__)
+                raise
 
     return app
 
