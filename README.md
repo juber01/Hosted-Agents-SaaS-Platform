@@ -72,6 +72,11 @@ Estimate daily/monthly run-rate from live Azure resource configuration and curre
 - `POST /v1/admin/plans`
 - `PATCH /v1/admin/tenants/{tenant_id}/plan`
 - `GET /v1/admin/tenants/{tenant_id}/usage`
+- `GET /v1/admin/tenants/{tenant_id}/agents`
+- `POST /v1/admin/tenants/{tenant_id}/agents`
+- `GET /v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents`
+- `PUT /v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}`
+- `DELETE /v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}`
 - `GET /v1/admin/usage/export`
 - `POST /v1/tenants`
 - `GET /v1/tenants/{tenant_id}`
@@ -93,6 +98,9 @@ Estimate daily/monthly run-rate from live Azure resource configuration and curre
   - `POST /v1/tenants/{tenant_id}/runs` uses `agent_id` as the Foundry agent id.
   - `FOUNDRY_RUN_POLL_INTERVAL_SECONDS` controls run polling interval.
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
+- Run execution is also gated by customer entitlements:
+  - tenant agent must exist and be active
+  - customer must have explicit grant (or temporary wildcard `customer_id='*'` grant)
 - Provisioning jobs support idempotency keys, retry backoff, and dead-letter state.
 - `PROVISIONING_QUEUE_BACKEND=database` uses only Postgres/in-memory queue state.
 - `PROVISIONING_QUEUE_BACKEND=storage_queue` wraps the base queue with Azure Storage Queue signaling:
@@ -120,6 +128,8 @@ Estimate daily/monthly run-rate from live Azure resource configuration and curre
   - `tenant_id`/`tid` matches the path tenant id
 - Full Entra mapping contract:
   - `docs/ENTRA_ADMIN_RBAC_CONTRACT.md`
+- Wildcard-to-explicit entitlement migration runbook:
+  - `docs/ENTITLEMENT_ROLLOUT.md`
 
 ## Observability
 
