@@ -468,3 +468,78 @@ def test_customer_agent_entitlement_admin_flow() -> None:
         json={"agent_id": "support", "user_id": "cust-1", "message": "again"},
     )
     assert denied_after_revoke.status_code == 403
+
+
+def test_runs_require_auth_when_jwks_is_configured() -> None:
+    app = create_app(
+        _settings(
+            allow_api_key_fallback=True,
+            tenant_api_keys={},
+            jwt_shared_secret="",
+            jwt_jwks_url="https://example.invalid/jwks",
+            jwt_issuer="https://login.microsoftonline.com/test/v2.0",
+            jwt_audience="api://hosted-agents-saas-platform",
+            default_rate_limit_rpm=20,
+        )
+    )
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
+    )
+    _grant_agent_access(
+        app,
+        tenant_id="tenant-dev",
+        customer_user_id="user-1",
+        agent_id="support",
+        display_name="Support",
+    )
+    client = TestClient(app)
+
+    unauthorized = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers={
+            "X-Tenant-Id": "tenant-dev",
+            "X-Customer-User-Id": "user-1",
+            "X-Api-Key": "",
+        },
+        json={"agent_id": "support", "user_id": "user-1", "message": "hello"},
+    )
+    assert unauthorized.status_code == 401
+    assert unauthorized.json()["detail"] == "Unauthorized tenant credentials"
+
+
+def test_runs_fail_closed_in_prod_when_tenant_auth_not_configured() -> None:
+    app = create_app(
+        _settings(
+            app_env="prod",
+            allow_api_key_fallback=True,
+            tenant_api_keys={},
+            jwt_shared_secret="",
+            jwt_jwks_url="",
+            jwt_issuer="",
+            jwt_audience="",
+            default_rate_limit_rpm=20,
+        )
+    )
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
+    )
+    _grant_agent_access(
+        app,
+        tenant_id="tenant-dev",
+        customer_user_id="user-1",
+        agent_id="support",
+        display_name="Support",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers={
+            "X-Tenant-Id": "tenant-dev",
+            "X-Customer-User-Id": "user-1",
+            "X-Api-Key": "",
+        },
+        json={"agent_id": "support", "user_id": "user-1", "message": "hello"},
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Tenant authentication is not configured"

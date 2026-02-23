@@ -55,12 +55,18 @@ class TenantAuthService:
         if path_tenant_id != x_tenant_id:
             raise HTTPException(status_code=403, detail="Path tenant_id does not match header tenant")
 
-        if self.settings.tenant_api_keys or self.settings.jwt_shared_secret:
+        auth_configured = bool(self.settings.tenant_api_keys) or bool(self.settings.jwt_shared_secret) or _is_jwks_enabled(
+            self.settings
+        )
+        if auth_configured:
             if self._is_valid_api_key(tenant_id=x_tenant_id, api_key=x_api_key):
                 return TenantContext(tenant_id=x_tenant_id, customer_user_id=x_customer_user_id)
             if self._is_valid_jwt(tenant_id=x_tenant_id, authorization=authorization):
                 return TenantContext(tenant_id=x_tenant_id, customer_user_id=x_customer_user_id)
             raise HTTPException(status_code=401, detail="Unauthorized tenant credentials")
+
+        if self.settings.app_env.strip().lower() in {"prod", "production"}:
+            raise HTTPException(status_code=500, detail="Tenant authentication is not configured")
 
         return TenantContext(tenant_id=x_tenant_id, customer_user_id=x_customer_user_id)
 
