@@ -10,14 +10,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from saas_platform.adapters.foundry import FoundryAgentGateway
 from saas_platform.adapters.storage import (
+    InMemoryAgentAccessCatalog,
     InMemoryPlanCatalog,
     InMemoryProvisioningQueue,
     InMemoryTenantCatalog,
     InMemoryUsageMeter,
 )
 from saas_platform.config import Settings, get_settings
-from saas_platform.domain.interfaces import PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
+from saas_platform.domain.interfaces import AgentAccessCatalog, PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
 from saas_platform.domain.models import (
+    CustomerAgentEntitlement,
     CreatePlanRequest,
     CreateTenantRequest,
     CreateTenantResponse,
@@ -27,8 +29,10 @@ from saas_platform.domain.models import (
     PlanLimits,
     ProvisioningJob,
     Tenant,
+    TenantAgent,
     TenantBillingRecord,
     TenantUsageSummary,
+    UpsertTenantAgentRequest,
     UpdateTenantPlanRequest,
     UsageEvent,
 )
@@ -44,6 +48,7 @@ class AppContext:
     settings: Settings
     catalog: TenantCatalog
     plans: PlanCatalog
+    agent_access: AgentAccessCatalog
     queue: ProvisioningQueue
     usage: UsageMeter
     auth: TenantAuthService
@@ -102,6 +107,7 @@ def _build_context(settings: Settings) -> AppContext:
     if settings.tenant_catalog_dsn:
         try:
             from saas_platform.adapters.postgres import (
+                PostgresAgentAccessCatalog,
                 PostgresPlanCatalog,
                 PostgresProvisioningQueue,
                 PostgresSessionFactory,
@@ -123,11 +129,13 @@ def _build_context(settings: Settings) -> AppContext:
         )
         catalog = PostgresTenantCatalog(sf)
         plans = PostgresPlanCatalog(sf)
+        agent_access = PostgresAgentAccessCatalog(sf)
         queue = PostgresProvisioningQueue(sf)
         usage = PostgresUsageMeter(sf)
     else:
         catalog = InMemoryTenantCatalog()
         plans = InMemoryPlanCatalog()
+        agent_access = InMemoryAgentAccessCatalog()
         queue = InMemoryProvisioningQueue()
         usage = InMemoryUsageMeter()
 
@@ -140,6 +148,7 @@ def _build_context(settings: Settings) -> AppContext:
         settings=settings,
         catalog=catalog,
         plans=plans,
+        agent_access=agent_access,
         queue=queue,
         usage=usage,
         auth=TenantAuthService(settings),
@@ -415,6 +424,123 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         normalized_month = _normalize_month(month)
         return ctx.usage.summarize_tenant_month(tenant_id=tenant_id, month=normalized_month)
 
+    @app.get("/v1/admin/tenants/{tenant_id}/agents", response_model=list[TenantAgent])
+    def list_tenant_agents(
+        tenant_id: str,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> list[TenantAgent]:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.agents.read"},
+            tenant_id=tenant_id,
+        )
+        tenant = ctx.catalog.get_tenant(tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="tenant not found")
+        return ctx.agent_access.list_tenant_agents(tenant_id=tenant_id)
+
+    @app.post("/v1/admin/tenants/{tenant_id}/agents", response_model=TenantAgent, status_code=201)
+    def upsert_tenant_agent(
+        tenant_id: str,
+        request: UpsertTenantAgentRequest,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> TenantAgent:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.agents.write"},
+            tenant_id=tenant_id,
+        )
+        tenant = ctx.catalog.get_tenant(tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="tenant not found")
+        plan = ctx.plans.get_plan(tenant.plan)
+        if plan is None or not plan.active:
+            raise HTTPException(status_code=409, detail="tenant plan is invalid or inactive")
+
+        existing = ctx.agent_access.get_tenant_agent(tenant_id=tenant_id, agent_id=request.agent_id)
+        if request.active:
+            active_agents = [
+                agent
+                for agent in ctx.agent_access.list_tenant_agents(tenant_id=tenant_id)
+                if agent.active and agent.agent_id != request.agent_id
+            ]
+            if len(active_agents) >= plan.limits.max_agents:
+                raise HTTPException(status_code=409, detail="tenant reached max active agents for plan")
+
+        agent = TenantAgent(
+            tenant_id=tenant_id,
+            agent_id=request.agent_id,
+            display_name=request.display_name,
+            active=request.active,
+            created_at=existing.created_at if existing else datetime.now(timezone.utc),
+        )
+        ctx.agent_access.upsert_tenant_agent(agent)
+        return agent
+
+    @app.put("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}", status_code=204)
+    def grant_customer_agent_access(
+        tenant_id: str,
+        customer_id: str,
+        agent_id: str,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> None:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.agents.write", "tenant.agent_access.write"},
+            tenant_id=tenant_id,
+        )
+        tenant = ctx.catalog.get_tenant(tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="tenant not found")
+        agent = ctx.agent_access.get_tenant_agent(tenant_id=tenant_id, agent_id=agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="agent not found for tenant")
+        ctx.agent_access.grant_customer_agent(
+            CustomerAgentEntitlement(tenant_id=tenant_id, customer_id=customer_id, agent_id=agent_id)
+        )
+
+    @app.delete("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}", status_code=204)
+    def revoke_customer_agent_access(
+        tenant_id: str,
+        customer_id: str,
+        agent_id: str,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> None:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.agents.write", "tenant.agent_access.write"},
+            tenant_id=tenant_id,
+        )
+        tenant = ctx.catalog.get_tenant(tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="tenant not found")
+        ctx.agent_access.revoke_customer_agent(tenant_id=tenant_id, customer_id=customer_id, agent_id=agent_id)
+
+    @app.get("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents")
+    def list_customer_agent_access(
+        tenant_id: str,
+        customer_id: str,
+        authorization: str = Header(default="", alias="Authorization"),
+    ) -> dict[str, object]:
+        _authorize_admin(
+            authorization=authorization,
+            required_roles={"platform_admin", "tenant_admin"},
+            required_scopes={"tenant.agents.read", "tenant.agent_access.read"},
+            tenant_id=tenant_id,
+        )
+        tenant = ctx.catalog.get_tenant(tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="tenant not found")
+        return {
+            "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "agent_ids": ctx.agent_access.list_customer_agents(tenant_id=tenant_id, customer_id=customer_id),
+        }
+
     @app.get("/v1/admin/usage/export", response_model=list[TenantBillingRecord])
     def export_usage(
         month: str | None = None,
@@ -473,6 +599,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 plan = ctx.plans.get_plan(tenant.plan)
                 if plan is None or not plan.active:
                     raise HTTPException(status_code=409, detail="tenant plan is invalid or inactive")
+                if not ctx.agent_access.is_customer_entitled(
+                    tenant_id=tenant_id,
+                    customer_id=tenant_ctx.customer_id,
+                    agent_id=request.agent_id,
+                ):
+                    raise HTTPException(status_code=403, detail="customer is not entitled to run this agent")
 
                 rate_key = f"{tenant_ctx.tenant_id}:{request.agent_id}"
                 if not ctx.limiter.allow(rate_key):

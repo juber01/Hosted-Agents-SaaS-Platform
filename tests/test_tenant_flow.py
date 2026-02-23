@@ -4,7 +4,7 @@ import jwt
 
 from saas_platform.api.main import create_app
 from saas_platform.config import Settings
-from saas_platform.domain.models import Tenant
+from saas_platform.domain.models import CustomerAgentEntitlement, Tenant, TenantAgent
 
 
 def _settings(**overrides) -> Settings:
@@ -64,6 +64,31 @@ def _admin_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
+def _grant_agent_access(
+    app,
+    *,
+    tenant_id: str,
+    customer_id: str,
+    agent_id: str,
+    display_name: str | None = None,
+) -> None:
+    app.state.ctx.agent_access.upsert_tenant_agent(
+        TenantAgent(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            display_name=display_name or agent_id,
+            active=True,
+        )
+    )
+    app.state.ctx.agent_access.grant_customer_agent(
+        CustomerAgentEntitlement(
+            tenant_id=tenant_id,
+            customer_id=customer_id,
+            agent_id=agent_id,
+        )
+    )
+
+
 def test_tenant_provisioning_and_run_flow() -> None:
     app = create_app(_settings())
     client = TestClient(app)
@@ -104,6 +129,7 @@ def test_api_key_auth_and_rate_limit() -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
 
     client = TestClient(app)
 
@@ -186,6 +212,8 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
     assert process.status_code == 200
     assert process.json()["processed"] is True
 
+    _grant_agent_access(app, tenant_id=tenant_id, customer_id="user-1", agent_id="assistant", display_name="Assistant")
+
     headers = {
         "X-Tenant-Id": tenant_id,
         "X-Customer-Id": "user-1",
@@ -222,6 +250,7 @@ def test_usage_export_and_tenant_usage_summary() -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
 
     run = client.post(
         "/v1/tenants/tenant-dev/runs",
@@ -340,6 +369,7 @@ def test_api_execute_run_starts_telemetry_span(monkeypatch) -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
 
     spans: list[str] = []
 
@@ -374,3 +404,67 @@ def test_api_execute_run_starts_telemetry_span(monkeypatch) -> None:
     )
     assert run.status_code == 200
     assert "api.runs.execute" in spans
+
+
+def test_customer_agent_entitlement_admin_flow() -> None:
+    secret = "admin-secret-1234567890-1234567890"
+    app = create_app(_settings(allow_api_key_fallback=True, jwt_shared_secret=secret, default_rate_limit_rpm=20))
+    app.state.ctx.catalog.upsert_tenant(
+        Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
+    )
+    client = TestClient(app)
+
+    run_headers = {
+        "X-Tenant-Id": "tenant-dev",
+        "X-Customer-Id": "cust-1",
+        "X-Api-Key": "dev-key-123",
+    }
+    denied = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers=run_headers,
+        json={"agent_id": "support", "user_id": "cust-1", "message": "hello"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "customer is not entitled to run this agent"
+
+    admin_headers = _admin_headers(secret=secret, roles=["tenant_admin"], tenant_ids=["tenant-dev"])
+
+    add_agent = client.post(
+        "/v1/admin/tenants/tenant-dev/agents",
+        headers=admin_headers,
+        json={"agent_id": "support", "display_name": "Support", "active": True},
+    )
+    assert add_agent.status_code == 201
+
+    grant = client.put(
+        "/v1/admin/tenants/tenant-dev/customers/cust-1/agents/support",
+        headers=admin_headers,
+    )
+    assert grant.status_code == 204
+
+    list_access = client.get(
+        "/v1/admin/tenants/tenant-dev/customers/cust-1/agents",
+        headers=admin_headers,
+    )
+    assert list_access.status_code == 200
+    assert list_access.json()["agent_ids"] == ["support"]
+
+    allowed = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers=run_headers,
+        json={"agent_id": "support", "user_id": "cust-1", "message": "hello"},
+    )
+    assert allowed.status_code == 200
+
+    revoke = client.delete(
+        "/v1/admin/tenants/tenant-dev/customers/cust-1/agents/support",
+        headers=admin_headers,
+    )
+    assert revoke.status_code == 204
+
+    denied_after_revoke = client.post(
+        "/v1/tenants/tenant-dev/runs",
+        headers=run_headers,
+        json={"agent_id": "support", "user_id": "cust-1", "message": "again"},
+    )
+    assert denied_after_revoke.status_code == 403

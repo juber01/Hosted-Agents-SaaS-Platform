@@ -12,6 +12,21 @@ class Tenant(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class TenantAgent(BaseModel):
+    tenant_id: str
+    agent_id: str
+    display_name: str
+    active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CustomerAgentEntitlement(BaseModel):
+    tenant_id: str
+    customer_id: str
+    agent_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class PlanLimits(BaseModel):
     monthly_messages: int
     monthly_token_cap: int
@@ -96,6 +111,12 @@ class CreatePlanRequest(BaseModel):
 
 class UpdateTenantPlanRequest(BaseModel):
     plan_id: str
+
+
+class UpsertTenantAgentRequest(BaseModel):
+    agent_id: str
+    display_name: str
+    active: bool = True
 
 
 class ExecuteRunRequest(BaseModel):

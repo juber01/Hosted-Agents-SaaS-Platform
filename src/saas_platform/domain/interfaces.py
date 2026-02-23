@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from saas_platform.domain.models import Plan, ProvisioningJob, Tenant, TenantBillingRecord, TenantUsageSummary, UsageEvent
+from saas_platform.domain.models import (
+    CustomerAgentEntitlement,
+    Plan,
+    ProvisioningJob,
+    Tenant,
+    TenantAgent,
+    TenantBillingRecord,
+    TenantUsageSummary,
+    UsageEvent,
+)
 
 
 class TenantCatalog(ABC):
@@ -26,6 +35,36 @@ class PlanCatalog(ABC):
 
     @abstractmethod
     def list_plans(self) -> list[Plan]:
+        raise NotImplementedError
+
+
+class AgentAccessCatalog(ABC):
+    @abstractmethod
+    def upsert_tenant_agent(self, agent: TenantAgent) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_tenant_agent(self, tenant_id: str, agent_id: str) -> TenantAgent | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_tenant_agents(self, tenant_id: str) -> list[TenantAgent]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def grant_customer_agent(self, entitlement: CustomerAgentEntitlement) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def revoke_customer_agent(self, tenant_id: str, customer_id: str, agent_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_customer_agents(self, tenant_id: str, customer_id: str) -> list[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_customer_entitled(self, tenant_id: str, customer_id: str, agent_id: str) -> bool:
         raise NotImplementedError
 
 

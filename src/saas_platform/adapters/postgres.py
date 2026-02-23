@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from saas_platform.domain.interfaces import PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
+from saas_platform.domain.interfaces import AgentAccessCatalog, PlanCatalog, ProvisioningQueue, TenantCatalog, UsageMeter
 from saas_platform.domain.models import (
+    CustomerAgentEntitlement,
     Plan,
     PlanLimits,
     ProvisioningJob,
     Tenant,
+    TenantAgent,
     TenantBillingRecord,
     TenantUsageSummary,
     UsageEvent,
@@ -40,6 +42,25 @@ class PlanRow(Base):
     monthly_token_cap: Mapped[int] = mapped_column(Integer, nullable=False)
     max_agents: Mapped[int] = mapped_column(Integer, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TenantAgentRow(Base):
+    __tablename__ = "tenant_agents"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CustomerAgentEntitlementRow(Base):
+    __tablename__ = "customer_agent_entitlements"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    customer_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -197,6 +218,108 @@ class PostgresPlanCatalog(PlanCatalog):
                 )
                 for row in rows
             ]
+
+
+class PostgresAgentAccessCatalog(AgentAccessCatalog):
+    def __init__(self, session_factory: PostgresSessionFactory) -> None:
+        self._sf = session_factory
+
+    def upsert_tenant_agent(self, agent: TenantAgent) -> None:
+        with self._sf.session() as session:
+            row = session.get(TenantAgentRow, (agent.tenant_id, agent.agent_id))
+            if row is None:
+                row = TenantAgentRow(
+                    tenant_id=agent.tenant_id,
+                    agent_id=agent.agent_id,
+                    display_name=agent.display_name,
+                    active=agent.active,
+                    created_at=agent.created_at,
+                )
+                session.add(row)
+            else:
+                row.display_name = agent.display_name
+                row.active = agent.active
+            session.commit()
+
+    def get_tenant_agent(self, tenant_id: str, agent_id: str) -> TenantAgent | None:
+        with self._sf.session() as session:
+            row = session.get(TenantAgentRow, (tenant_id, agent_id))
+            if row is None:
+                return None
+            return TenantAgent(
+                tenant_id=row.tenant_id,
+                agent_id=row.agent_id,
+                display_name=row.display_name,
+                active=bool(row.active),
+                created_at=row.created_at,
+            )
+
+    def list_tenant_agents(self, tenant_id: str) -> list[TenantAgent]:
+        with self._sf.session() as session:
+            rows = (
+                session.execute(
+                    select(TenantAgentRow)
+                    .where(TenantAgentRow.tenant_id == tenant_id)
+                    .order_by(TenantAgentRow.agent_id)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                TenantAgent(
+                    tenant_id=row.tenant_id,
+                    agent_id=row.agent_id,
+                    display_name=row.display_name,
+                    active=bool(row.active),
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
+
+    def grant_customer_agent(self, entitlement: CustomerAgentEntitlement) -> None:
+        with self._sf.session() as session:
+            row = CustomerAgentEntitlementRow(
+                tenant_id=entitlement.tenant_id,
+                customer_id=entitlement.customer_id,
+                agent_id=entitlement.agent_id,
+                created_at=entitlement.created_at,
+            )
+            session.merge(row)
+            session.commit()
+
+    def revoke_customer_agent(self, tenant_id: str, customer_id: str, agent_id: str) -> None:
+        with self._sf.session() as session:
+            row = session.get(CustomerAgentEntitlementRow, (tenant_id, customer_id, agent_id))
+            if row is None:
+                return
+            session.delete(row)
+            session.commit()
+
+    def list_customer_agents(self, tenant_id: str, customer_id: str) -> list[str]:
+        with self._sf.session() as session:
+            rows = session.execute(
+                select(CustomerAgentEntitlementRow.agent_id)
+                .where(
+                    CustomerAgentEntitlementRow.tenant_id == tenant_id,
+                    CustomerAgentEntitlementRow.customer_id.in_([customer_id, "*"]),
+                )
+                .order_by(CustomerAgentEntitlementRow.agent_id)
+            ).all()
+            return sorted({str(agent_id) for (agent_id,) in rows})
+
+    def is_customer_entitled(self, tenant_id: str, customer_id: str, agent_id: str) -> bool:
+        with self._sf.session() as session:
+            agent = session.get(TenantAgentRow, (tenant_id, agent_id))
+            if agent is None or not bool(agent.active):
+                return False
+            entitled = session.execute(
+                select(CustomerAgentEntitlementRow.tenant_id).where(
+                    CustomerAgentEntitlementRow.tenant_id == tenant_id,
+                    CustomerAgentEntitlementRow.agent_id == agent_id,
+                    CustomerAgentEntitlementRow.customer_id.in_([customer_id, "*"]),
+                )
+            ).first()
+            return entitled is not None
 
 
 class PostgresProvisioningQueue(ProvisioningQueue):
