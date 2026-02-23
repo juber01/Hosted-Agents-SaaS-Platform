@@ -56,15 +56,15 @@ class AgentAccessCatalog(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def revoke_customer_agent(self, tenant_id: str, customer_id: str, agent_id: str) -> None:
+    def revoke_customer_agent(self, tenant_id: str, customer_user_id: str, agent_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def list_customer_agents(self, tenant_id: str, customer_id: str) -> list[str]:
+    def list_customer_agents(self, tenant_id: str, customer_user_id: str) -> list[str]:
         raise NotImplementedError
 
     @abstractmethod
-    def is_customer_entitled(self, tenant_id: str, customer_id: str, agent_id: str) -> bool:
+    def is_customer_entitled(self, tenant_id: str, customer_user_id: str, agent_id: str) -> bool:
         raise NotImplementedError
 
 

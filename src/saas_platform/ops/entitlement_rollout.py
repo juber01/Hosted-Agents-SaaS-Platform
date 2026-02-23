@@ -38,7 +38,7 @@ def main() -> int:
     apply_parser.add_argument(
         "--mapping-file",
         required=True,
-        help="CSV with columns: tenant_id,agent_id,customer_id",
+        help="CSV with columns: tenant_id,agent_id,customer_user_id (or legacy customer_id)",
     )
     apply_parser.add_argument(
         "--drop-wildcards",
@@ -81,8 +81,8 @@ def _audit(engine) -> None:
                 """
                 select
                     count(*) as total_rows,
-                    count(*) filter (where customer_id = '*') as wildcard_rows,
-                    count(*) filter (where customer_id <> '*') as explicit_rows
+                    count(*) filter (where customer_user_id = '*') as wildcard_rows,
+                    count(*) filter (where customer_user_id <> '*') as explicit_rows
                 from customer_agent_entitlements
                 """
             )
@@ -94,7 +94,7 @@ def _audit(engine) -> None:
                 from (
                     select tenant_id, agent_id
                     from customer_agent_entitlements
-                    where customer_id = '*'
+                    where customer_user_id = '*'
                     group by tenant_id, agent_id
                 ) as q
                 """
@@ -105,10 +105,10 @@ def _audit(engine) -> None:
                 """
                 select count(*)
                 from (
-                    select tenant_id, customer_id
+                    select tenant_id, customer_user_id
                     from customer_agent_entitlements
-                    where customer_id <> '*'
-                    group by tenant_id, customer_id
+                    where customer_user_id <> '*'
+                    group by tenant_id, customer_user_id
                 ) as q
                 """
             )
@@ -130,7 +130,7 @@ def _export_template(engine, output_path: Path) -> None:
                 """
                 select tenant_id, agent_id
                 from customer_agent_entitlements
-                where customer_id = '*'
+                where customer_user_id = '*'
                 group by tenant_id, agent_id
                 order by tenant_id, agent_id
                 """
@@ -138,14 +138,14 @@ def _export_template(engine, output_path: Path) -> None:
         ).all()
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["tenant_id", "agent_id", "customer_id"])
+        writer = csv.DictWriter(handle, fieldnames=["tenant_id", "agent_id", "customer_user_id"])
         writer.writeheader()
         for tenant_id, agent_id in rows:
             writer.writerow(
                 {
                     "tenant_id": str(tenant_id),
                     "agent_id": str(agent_id),
-                    "customer_id": "",
+                    "customer_user_id": "",
                 }
             )
     print(f"template_written: {output_path} ({len(rows)} rows)")
@@ -168,16 +168,16 @@ def _apply_mapping(*, engine, mapping_file: Path, dry_run: bool, drop_wildcards:
         return
 
     with engine.begin() as conn:
-        for tenant_id, agent_id, customer_id in mappings:
+        for tenant_id, agent_id, customer_user_id in mappings:
             conn.execute(
                 text(
                     """
-                    insert into customer_agent_entitlements (tenant_id, customer_id, agent_id, created_at)
-                    values (:tenant_id, :customer_id, :agent_id, now())
-                    on conflict (tenant_id, customer_id, agent_id) do nothing
+                    insert into customer_agent_entitlements (tenant_id, customer_user_id, agent_id, created_at)
+                    values (:tenant_id, :customer_user_id, :agent_id, now())
+                    on conflict (tenant_id, customer_user_id, agent_id) do nothing
                     """
                 ),
-                {"tenant_id": tenant_id, "customer_id": customer_id, "agent_id": agent_id},
+                {"tenant_id": tenant_id, "customer_user_id": customer_user_id, "agent_id": agent_id},
             )
 
         if drop_wildcards:
@@ -188,7 +188,7 @@ def _apply_mapping(*, engine, mapping_file: Path, dry_run: bool, drop_wildcards:
                         delete from customer_agent_entitlements
                         where tenant_id = :tenant_id
                           and agent_id = :agent_id
-                          and customer_id = '*'
+                          and customer_user_id = '*'
                         """
                     ),
                     {"tenant_id": tenant_id, "agent_id": agent_id},
@@ -206,20 +206,27 @@ def _load_mapping_rows(path: Path) -> list[tuple[str, str, str]]:
     rows: list[tuple[str, str, str]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        required = {"tenant_id", "agent_id", "customer_id"}
+        legacy_field = "customer_id"
+        preferred_field = "customer_user_id"
+        required = {"tenant_id", "agent_id"}
         missing = required.difference(set(reader.fieldnames or []))
         if missing:
             raise SystemExit(f"Missing required CSV columns: {sorted(missing)}")
+        customer_field = preferred_field if preferred_field in (reader.fieldnames or []) else legacy_field
+        if customer_field not in (reader.fieldnames or []):
+            raise SystemExit(
+                "Missing required CSV column: customer_user_id (or legacy customer_id)"
+            )
 
         for index, raw in enumerate(reader, start=2):
             tenant_id = str(raw.get("tenant_id", "")).strip()
             agent_id = str(raw.get("agent_id", "")).strip()
-            customer_id = str(raw.get("customer_id", "")).strip()
-            if not tenant_id or not agent_id or not customer_id:
+            customer_user_id = str(raw.get(customer_field, "")).strip()
+            if not tenant_id or not agent_id or not customer_user_id:
                 continue
-            if customer_id == "*":
-                raise SystemExit(f"Invalid customer_id '*' in mapping file at line {index}")
-            rows.append((tenant_id, agent_id, customer_id))
+            if customer_user_id == "*":
+                raise SystemExit(f"Invalid customer_user_id '*' in mapping file at line {index}")
+            rows.append((tenant_id, agent_id, customer_user_id))
 
     deduped = sorted(set(rows))
     return deduped
@@ -227,4 +234,3 @@ def _load_mapping_rows(path: Path) -> list[tuple[str, str, str]]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

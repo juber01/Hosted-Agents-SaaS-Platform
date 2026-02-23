@@ -58,24 +58,28 @@ class InMemoryAgentAccessCatalog(AgentAccessCatalog):
         )
 
     def grant_customer_agent(self, entitlement: CustomerAgentEntitlement) -> None:
-        self._entitlements.add((entitlement.tenant_id, entitlement.customer_id, entitlement.agent_id))
+        self._entitlements.add((entitlement.tenant_id, entitlement.customer_user_id, entitlement.agent_id))
 
-    def revoke_customer_agent(self, tenant_id: str, customer_id: str, agent_id: str) -> None:
-        self._entitlements.discard((tenant_id, customer_id, agent_id))
+    def revoke_customer_agent(self, tenant_id: str, customer_user_id: str, agent_id: str) -> None:
+        self._entitlements.discard((tenant_id, customer_user_id, agent_id))
 
-    def list_customer_agents(self, tenant_id: str, customer_id: str) -> list[str]:
+    def list_customer_agents(self, tenant_id: str, customer_user_id: str) -> list[str]:
         permitted = {
             agent_id
             for tid, cid, agent_id in self._entitlements
-            if tid == tenant_id and cid in {customer_id, "*"}
+            if tid == tenant_id and cid in {customer_user_id, "*"}
         }
         return sorted(permitted)
 
-    def is_customer_entitled(self, tenant_id: str, customer_id: str, agent_id: str) -> bool:
+    def is_customer_entitled(self, tenant_id: str, customer_user_id: str, agent_id: str) -> bool:
         agent = self.get_tenant_agent(tenant_id=tenant_id, agent_id=agent_id)
         if agent is None or not agent.active:
             return False
-        return (tenant_id, customer_id, agent_id) in self._entitlements or (tenant_id, "*", agent_id) in self._entitlements
+        return (tenant_id, customer_user_id, agent_id) in self._entitlements or (
+            tenant_id,
+            "*",
+            agent_id,
+        ) in self._entitlements
 
 
 class InMemoryProvisioningQueue(ProvisioningQueue):

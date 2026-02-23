@@ -59,7 +59,7 @@ class CustomerAgentEntitlementRow(Base):
     __tablename__ = "customer_agent_entitlements"
 
     tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    customer_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    customer_user_id: Mapped[str] = mapped_column("customer_user_id", String(100), primary_key=True)
     agent_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -280,34 +280,34 @@ class PostgresAgentAccessCatalog(AgentAccessCatalog):
         with self._sf.session() as session:
             row = CustomerAgentEntitlementRow(
                 tenant_id=entitlement.tenant_id,
-                customer_id=entitlement.customer_id,
+                customer_user_id=entitlement.customer_user_id,
                 agent_id=entitlement.agent_id,
                 created_at=entitlement.created_at,
             )
             session.merge(row)
             session.commit()
 
-    def revoke_customer_agent(self, tenant_id: str, customer_id: str, agent_id: str) -> None:
+    def revoke_customer_agent(self, tenant_id: str, customer_user_id: str, agent_id: str) -> None:
         with self._sf.session() as session:
-            row = session.get(CustomerAgentEntitlementRow, (tenant_id, customer_id, agent_id))
+            row = session.get(CustomerAgentEntitlementRow, (tenant_id, customer_user_id, agent_id))
             if row is None:
                 return
             session.delete(row)
             session.commit()
 
-    def list_customer_agents(self, tenant_id: str, customer_id: str) -> list[str]:
+    def list_customer_agents(self, tenant_id: str, customer_user_id: str) -> list[str]:
         with self._sf.session() as session:
             rows = session.execute(
                 select(CustomerAgentEntitlementRow.agent_id)
                 .where(
                     CustomerAgentEntitlementRow.tenant_id == tenant_id,
-                    CustomerAgentEntitlementRow.customer_id.in_([customer_id, "*"]),
+                    CustomerAgentEntitlementRow.customer_user_id.in_([customer_user_id, "*"]),
                 )
                 .order_by(CustomerAgentEntitlementRow.agent_id)
             ).all()
             return sorted({str(agent_id) for (agent_id,) in rows})
 
-    def is_customer_entitled(self, tenant_id: str, customer_id: str, agent_id: str) -> bool:
+    def is_customer_entitled(self, tenant_id: str, customer_user_id: str, agent_id: str) -> bool:
         with self._sf.session() as session:
             agent = session.get(TenantAgentRow, (tenant_id, agent_id))
             if agent is None or not bool(agent.active):
@@ -316,7 +316,7 @@ class PostgresAgentAccessCatalog(AgentAccessCatalog):
                 select(CustomerAgentEntitlementRow.tenant_id).where(
                     CustomerAgentEntitlementRow.tenant_id == tenant_id,
                     CustomerAgentEntitlementRow.agent_id == agent_id,
-                    CustomerAgentEntitlementRow.customer_id.in_([customer_id, "*"]),
+                    CustomerAgentEntitlementRow.customer_user_id.in_([customer_user_id, "*"]),
                 )
             ).first()
             return entitled is not None

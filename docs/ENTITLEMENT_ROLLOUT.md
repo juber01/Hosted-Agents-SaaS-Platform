@@ -1,6 +1,6 @@
 # Entitlement Rollout (Wildcard to Explicit)
 
-This runbook migrates customer access from wildcard grants (`customer_id='*'`) to explicit per-customer grants.
+This runbook migrates customer access from wildcard grants (`customer_user_id='*'`) to explicit per-customer grants.
 
 ## 1) Audit current state
 
@@ -19,12 +19,12 @@ This runbook migrates customer access from wildcard grants (`customer_id='*'`) t
   --output /tmp/entitlement_mapping.csv
 ```
 
-Fill `customer_id` for each tenant+agent row in the CSV.
+Fill `customer_user_id` for each tenant+agent row in the CSV.
 
 CSV columns:
 - `tenant_id`
 - `agent_id`
-- `customer_id`
+- `customer_user_id`
 
 ## 3) Dry-run apply
 
@@ -48,4 +48,3 @@ CSV columns:
 ```
 
 This only drops wildcard rows for tenant+agent pairs present in the mapping file.
-

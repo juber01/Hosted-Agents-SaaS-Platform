@@ -479,10 +479,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ctx.agent_access.upsert_tenant_agent(agent)
         return agent
 
-    @app.put("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}", status_code=204)
+    @app.put("/v1/admin/tenants/{tenant_id}/customers/{customer_user_id}/agents/{agent_id}", status_code=204)
     def grant_customer_agent_access(
         tenant_id: str,
-        customer_id: str,
+        customer_user_id: str,
         agent_id: str,
         authorization: str = Header(default="", alias="Authorization"),
     ) -> None:
@@ -499,13 +499,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found for tenant")
         ctx.agent_access.grant_customer_agent(
-            CustomerAgentEntitlement(tenant_id=tenant_id, customer_id=customer_id, agent_id=agent_id)
+            CustomerAgentEntitlement(tenant_id=tenant_id, customer_user_id=customer_user_id, agent_id=agent_id)
         )
 
-    @app.delete("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents/{agent_id}", status_code=204)
+    @app.delete("/v1/admin/tenants/{tenant_id}/customers/{customer_user_id}/agents/{agent_id}", status_code=204)
     def revoke_customer_agent_access(
         tenant_id: str,
-        customer_id: str,
+        customer_user_id: str,
         agent_id: str,
         authorization: str = Header(default="", alias="Authorization"),
     ) -> None:
@@ -518,12 +518,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tenant = ctx.catalog.get_tenant(tenant_id)
         if tenant is None:
             raise HTTPException(status_code=404, detail="tenant not found")
-        ctx.agent_access.revoke_customer_agent(tenant_id=tenant_id, customer_id=customer_id, agent_id=agent_id)
+        ctx.agent_access.revoke_customer_agent(
+            tenant_id=tenant_id,
+            customer_user_id=customer_user_id,
+            agent_id=agent_id,
+        )
 
-    @app.get("/v1/admin/tenants/{tenant_id}/customers/{customer_id}/agents")
+    @app.get("/v1/admin/tenants/{tenant_id}/customers/{customer_user_id}/agents")
     def list_customer_agent_access(
         tenant_id: str,
-        customer_id: str,
+        customer_user_id: str,
         authorization: str = Header(default="", alias="Authorization"),
     ) -> dict[str, object]:
         _authorize_admin(
@@ -537,8 +541,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="tenant not found")
         return {
             "tenant_id": tenant_id,
-            "customer_id": customer_id,
-            "agent_ids": ctx.agent_access.list_customer_agents(tenant_id=tenant_id, customer_id=customer_id),
+            "customer_user_id": customer_user_id,
+            "agent_ids": ctx.agent_access.list_customer_agents(
+                tenant_id=tenant_id,
+                customer_user_id=customer_user_id,
+            ),
         }
 
     @app.get("/v1/admin/usage/export", response_model=list[TenantBillingRecord])
@@ -572,7 +579,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ExecuteRunRequest,
         headers: tuple[str, str, str, str] = Depends(tenant_headers),
     ) -> ExecuteRunResponse:
-        x_tenant_id, x_customer_id, x_api_key, authorization = headers
+        x_tenant_id, x_customer_user_id, x_api_key, authorization = headers
         with start_span(
             "api.runs.execute",
             {
@@ -586,7 +593,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 tenant_ctx = ctx.auth.authenticate(
                     path_tenant_id=tenant_id,
                     x_tenant_id=x_tenant_id,
-                    x_customer_id=x_customer_id,
+                    x_customer_user_id=x_customer_user_id,
                     x_api_key=x_api_key,
                     authorization=authorization,
                 )
@@ -601,7 +608,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     raise HTTPException(status_code=409, detail="tenant plan is invalid or inactive")
                 if not ctx.agent_access.is_customer_entitled(
                     tenant_id=tenant_id,
-                    customer_id=tenant_ctx.customer_id,
+                    customer_user_id=tenant_ctx.customer_user_id,
                     agent_id=request.agent_id,
                 ):
                     raise HTTPException(status_code=403, detail="customer is not entitled to run this agent")

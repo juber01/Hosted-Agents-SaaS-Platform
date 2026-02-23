@@ -106,7 +106,7 @@ def test_tenant_auth_accepts_valid_jwks_token(monkeypatch: pytest.MonkeyPatch) -
     tenant_ctx = TenantAuthService(_settings()).authenticate(
         path_tenant_id="tenant-123",
         x_tenant_id="tenant-123",
-        x_customer_id="user-1",
+        x_customer_user_id="user-1",
         x_api_key="",
         authorization=f"Bearer {token}",
     )

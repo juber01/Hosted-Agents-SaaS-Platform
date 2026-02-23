@@ -68,7 +68,7 @@ def _grant_agent_access(
     app,
     *,
     tenant_id: str,
-    customer_id: str,
+    customer_user_id: str,
     agent_id: str,
     display_name: str | None = None,
 ) -> None:
@@ -83,7 +83,7 @@ def _grant_agent_access(
     app.state.ctx.agent_access.grant_customer_agent(
         CustomerAgentEntitlement(
             tenant_id=tenant_id,
-            customer_id=customer_id,
+            customer_user_id=customer_user_id,
             agent_id=agent_id,
         )
     )
@@ -114,7 +114,7 @@ def test_tenant_provisioning_and_run_flow() -> None:
         f"/v1/tenants/{tenant_id}/runs",
         headers={
             "X-Tenant-Id": tenant_id,
-            "X-Customer-Id": "user-1",
+            "X-Customer-User-Id": "user-1",
             "X-Api-Key": "",
         },
         json={"agent_id": "support", "user_id": "user-1", "message": "hello"},
@@ -129,13 +129,13 @@ def test_api_key_auth_and_rate_limit() -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
-    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_user_id="user-1", agent_id="support", display_name="Support")
 
     client = TestClient(app)
 
     headers = {
         "X-Tenant-Id": "tenant-dev",
-        "X-Customer-Id": "user-1",
+        "X-Customer-User-Id": "user-1",
         "X-Api-Key": "dev-key-123",
     }
 
@@ -212,11 +212,11 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
     assert process.status_code == 200
     assert process.json()["processed"] is True
 
-    _grant_agent_access(app, tenant_id=tenant_id, customer_id="user-1", agent_id="assistant", display_name="Assistant")
+    _grant_agent_access(app, tenant_id=tenant_id, customer_user_id="user-1", agent_id="assistant", display_name="Assistant")
 
     headers = {
         "X-Tenant-Id": tenant_id,
-        "X-Customer-Id": "user-1",
+        "X-Customer-User-Id": "user-1",
         "X-Api-Key": "",
         "Authorization": f"Bearer {jwt.encode({'tenant_id': tenant_id}, secret, algorithm='HS256')}",
     }
@@ -250,13 +250,13 @@ def test_usage_export_and_tenant_usage_summary() -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
-    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_user_id="user-1", agent_id="support", display_name="Support")
 
     run = client.post(
         "/v1/tenants/tenant-dev/runs",
         headers={
             "X-Tenant-Id": "tenant-dev",
-            "X-Customer-Id": "user-1",
+            "X-Customer-User-Id": "user-1",
             "X-Api-Key": "dev-key-123",
         },
         json={"agent_id": "support", "user_id": "user-1", "message": "meter this"},
@@ -369,7 +369,7 @@ def test_api_execute_run_starts_telemetry_span(monkeypatch) -> None:
     app.state.ctx.catalog.upsert_tenant(
         Tenant(tenant_id="tenant-dev", name="Acme", plan="starter", status="active")
     )
-    _grant_agent_access(app, tenant_id="tenant-dev", customer_id="user-1", agent_id="support", display_name="Support")
+    _grant_agent_access(app, tenant_id="tenant-dev", customer_user_id="user-1", agent_id="support", display_name="Support")
 
     spans: list[str] = []
 
@@ -397,7 +397,7 @@ def test_api_execute_run_starts_telemetry_span(monkeypatch) -> None:
         "/v1/tenants/tenant-dev/runs",
         headers={
             "X-Tenant-Id": "tenant-dev",
-            "X-Customer-Id": "user-1",
+            "X-Customer-User-Id": "user-1",
             "X-Api-Key": "dev-key-123",
         },
         json={"agent_id": "support", "user_id": "user-1", "message": "telemetry test"},
@@ -416,7 +416,7 @@ def test_customer_agent_entitlement_admin_flow() -> None:
 
     run_headers = {
         "X-Tenant-Id": "tenant-dev",
-        "X-Customer-Id": "cust-1",
+        "X-Customer-User-Id": "cust-1",
         "X-Api-Key": "dev-key-123",
     }
     denied = client.post(

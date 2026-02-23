@@ -22,7 +22,7 @@ class TenantAgent(BaseModel):
 
 class CustomerAgentEntitlement(BaseModel):
     tenant_id: str
-    customer_id: str
+    customer_user_id: str
     agent_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
