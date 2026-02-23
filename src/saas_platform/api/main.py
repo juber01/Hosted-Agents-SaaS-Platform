@@ -114,7 +114,13 @@ def _build_context(settings: Settings) -> AppContext:
                 "Install project dependencies before setting TENANT_CATALOG_DSN."
             ) from err
 
-        sf = PostgresSessionFactory(settings.tenant_catalog_dsn)
+        sf = PostgresSessionFactory(
+            settings.tenant_catalog_dsn,
+            pool_size=settings.postgres_pool_size,
+            max_overflow=settings.postgres_max_overflow,
+            pool_timeout_seconds=settings.postgres_pool_timeout_seconds,
+            pool_recycle_seconds=settings.postgres_pool_recycle_seconds,
+        )
         catalog = PostgresTenantCatalog(sf)
         plans = PostgresPlanCatalog(sf)
         queue = PostgresProvisioningQueue(sf)

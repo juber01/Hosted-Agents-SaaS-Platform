@@ -55,6 +55,14 @@ saas-platform-worker --once
 - Deployment runbook:
   - `infra/azure/containerapps/README.md`
 
+## Cost estimate
+
+Estimate daily/monthly run-rate from live Azure resource configuration and current retail prices:
+
+```bash
+./scripts/estimate_cost.py --resource-group rg-hosted-agents-saas-platform
+```
+
 ## Endpoints
 
 - `GET /health`
@@ -75,6 +83,11 @@ saas-platform-worker --once
 - If `TENANT_CATALOG_DSN` is set, the app uses Postgres-backed tenant catalog, provisioning queue, and usage metering.
 - If `TENANT_CATALOG_DSN` is empty, in-memory adapters are used for local development.
 - Postgres runtime does not create schema objects at startup; run `alembic upgrade head` before starting services.
+- Postgres client pool defaults are tuned for low-tier SMB databases:
+  - `POSTGRES_POOL_SIZE=3`
+  - `POSTGRES_MAX_OVERFLOW=0`
+  - `POSTGRES_POOL_TIMEOUT_SECONDS=10`
+  - `POSTGRES_POOL_RECYCLE_SECONDS=900`
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
 - Provisioning jobs support idempotency keys, retry backoff, and dead-letter state.
 - `PROVISIONING_QUEUE_BACKEND=database` uses only Postgres/in-memory queue state.

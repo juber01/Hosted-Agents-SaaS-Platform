@@ -66,6 +66,18 @@ param postgresDatabaseName string = 'saas_platform'
 @description('Default RPM applied per tenant+agent key.')
 param defaultRateLimitRpm int = 60
 
+@description('Postgres SQLAlchemy pool size per app replica.')
+param postgresPoolSize int = 3
+
+@description('Postgres SQLAlchemy max overflow connections per app replica.')
+param postgresMaxOverflow int = 0
+
+@description('Postgres SQLAlchemy pool timeout in seconds.')
+param postgresPoolTimeoutSeconds int = 10
+
+@description('Postgres SQLAlchemy pool recycle in seconds.')
+param postgresPoolRecycleSeconds int = 900
+
 @description('Enable Azure Cache for Redis deployment.')
 param redisEnabled bool = true
 
@@ -416,8 +428,12 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'KEY_VAULT_URL', value: keyVaultUrl }
             { name: 'RATE_LIMIT_BACKEND', value: redisEnabled ? 'redis' : 'memory' }
             { name: 'RATE_LIMIT_REDIS_URL', secretRef: 'redis-url' }
-            { name: 'RATE_LIMIT_REDIS_FAIL_OPEN', value: redisEnabled ? 'false' : 'true' }
+            { name: 'RATE_LIMIT_REDIS_FAIL_OPEN', value: 'true' }
             { name: 'DEFAULT_RATE_LIMIT_RPM', value: string(defaultRateLimitRpm) }
+            { name: 'POSTGRES_POOL_SIZE', value: string(postgresPoolSize) }
+            { name: 'POSTGRES_MAX_OVERFLOW', value: string(postgresMaxOverflow) }
+            { name: 'POSTGRES_POOL_TIMEOUT_SECONDS', value: string(postgresPoolTimeoutSeconds) }
+            { name: 'POSTGRES_POOL_RECYCLE_SECONDS', value: string(postgresPoolRecycleSeconds) }
             { name: 'JWT_JWKS_URL', value: jwtJwksUrl }
             { name: 'JWT_ISSUER', value: jwtIssuer }
             { name: 'JWT_AUDIENCE', value: jwtAudience }
@@ -493,8 +509,12 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PROVISIONING_WORKER_POLL_SECONDS', value: string(provisioningWorkerPollSeconds) }
             { name: 'RATE_LIMIT_BACKEND', value: redisEnabled ? 'redis' : 'memory' }
             { name: 'RATE_LIMIT_REDIS_URL', secretRef: 'redis-url' }
-            { name: 'RATE_LIMIT_REDIS_FAIL_OPEN', value: redisEnabled ? 'false' : 'true' }
+            { name: 'RATE_LIMIT_REDIS_FAIL_OPEN', value: 'true' }
             { name: 'DEFAULT_RATE_LIMIT_RPM', value: string(defaultRateLimitRpm) }
+            { name: 'POSTGRES_POOL_SIZE', value: string(postgresPoolSize) }
+            { name: 'POSTGRES_MAX_OVERFLOW', value: string(postgresMaxOverflow) }
+            { name: 'POSTGRES_POOL_TIMEOUT_SECONDS', value: string(postgresPoolTimeoutSeconds) }
+            { name: 'POSTGRES_POOL_RECYCLE_SECONDS', value: string(postgresPoolRecycleSeconds) }
             { name: 'JWT_JWKS_URL', value: jwtJwksUrl }
             { name: 'JWT_ISSUER', value: jwtIssuer }
             { name: 'JWT_AUDIENCE', value: jwtAudience }

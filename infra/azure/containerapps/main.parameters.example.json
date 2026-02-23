@@ -59,6 +59,18 @@
     "defaultRateLimitRpm": {
       "value": 60
     },
+    "postgresPoolSize": {
+      "value": 3
+    },
+    "postgresMaxOverflow": {
+      "value": 0
+    },
+    "postgresPoolTimeoutSeconds": {
+      "value": 10
+    },
+    "postgresPoolRecycleSeconds": {
+      "value": 900
+    },
     "redisEnabled": {
       "value": true
     },

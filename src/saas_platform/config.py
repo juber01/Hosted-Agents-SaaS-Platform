@@ -42,6 +42,10 @@ class Settings:
     jwt_shared_secret: str
     jwt_algorithm: str
     default_rate_limit_rpm: int
+    postgres_pool_size: int = 3
+    postgres_max_overflow: int = 0
+    postgres_pool_timeout_seconds: int = 10
+    postgres_pool_recycle_seconds: int = 900
 
 
 def _parse_tenant_api_keys(raw: str) -> dict[str, str]:
@@ -119,4 +123,8 @@ def get_settings() -> Settings:
         jwt_shared_secret=os.getenv("JWT_SHARED_SECRET", ""),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         default_rate_limit_rpm=int(os.getenv("DEFAULT_RATE_LIMIT_RPM", "60")),
+        postgres_pool_size=max(1, int(os.getenv("POSTGRES_POOL_SIZE", "3"))),
+        postgres_max_overflow=max(0, int(os.getenv("POSTGRES_MAX_OVERFLOW", "0"))),
+        postgres_pool_timeout_seconds=max(1, int(os.getenv("POSTGRES_POOL_TIMEOUT_SECONDS", "10"))),
+        postgres_pool_recycle_seconds=max(30, int(os.getenv("POSTGRES_POOL_RECYCLE_SECONDS", "900"))),
     )

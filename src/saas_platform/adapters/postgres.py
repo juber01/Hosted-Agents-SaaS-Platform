@@ -74,8 +74,24 @@ class UsageEventRow(Base):
 
 
 class PostgresSessionFactory:
-    def __init__(self, dsn: str) -> None:
-        self.engine = create_engine(dsn, future=True, pool_pre_ping=True)
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        pool_size: int = 3,
+        max_overflow: int = 0,
+        pool_timeout_seconds: int = 10,
+        pool_recycle_seconds: int = 900,
+    ) -> None:
+        self.engine = create_engine(
+            dsn,
+            future=True,
+            pool_pre_ping=True,
+            pool_size=max(pool_size, 1),
+            max_overflow=max(max_overflow, 0),
+            pool_timeout=max(pool_timeout_seconds, 1),
+            pool_recycle=max(pool_recycle_seconds, 30),
+        )
         self._sessionmaker = sessionmaker(bind=self.engine, class_=Session, autoflush=False, autocommit=False)
 
     def create_all(self) -> None:
