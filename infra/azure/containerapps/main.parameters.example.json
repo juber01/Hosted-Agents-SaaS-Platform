@@ -33,7 +33,7 @@
       "value": "https://login.microsoftonline.com/<tenant-id>/v2.0"
     },
     "jwtAudience": {
-      "value": "api://<app-registration-client-id>"
+      "value": "<api-app-id-guid>"
     },
     "foundryEndpoint": {
       "value": ""

@@ -61,8 +61,11 @@ class TenantAuthService:
         if auth_configured:
             if self._is_valid_api_key(tenant_id=x_tenant_id, api_key=x_api_key):
                 return TenantContext(tenant_id=x_tenant_id, customer_user_id=x_customer_user_id)
-            if self._is_valid_jwt(tenant_id=x_tenant_id, authorization=authorization):
-                return TenantContext(tenant_id=x_tenant_id, customer_user_id=x_customer_user_id)
+            jwt_subject = self._get_valid_jwt_subject(tenant_id=x_tenant_id, authorization=authorization)
+            if jwt_subject:
+                if jwt_subject != x_customer_user_id:
+                    raise HTTPException(status_code=403, detail="X-Customer-User-Id must match token subject")
+                return TenantContext(tenant_id=x_tenant_id, customer_user_id=jwt_subject)
             raise HTTPException(status_code=401, detail="Unauthorized tenant credentials")
 
         if self.settings.app_env.strip().lower() in {"prod", "production"}:
@@ -74,13 +77,16 @@ class TenantAuthService:
         expected = self.settings.tenant_api_keys.get(tenant_id)
         return bool(expected and api_key and api_key == expected)
 
-    def _is_valid_jwt(self, tenant_id: str, authorization: str) -> bool:
+    def _get_valid_jwt_subject(self, tenant_id: str, authorization: str) -> str | None:
         try:
             payload = _decode_bearer_jwt(settings=self.settings, authorization=authorization)
             claim_tenant = str(payload.get("tenant_id") or payload.get("tid") or "")
-            return claim_tenant == tenant_id
+            if claim_tenant != tenant_id:
+                return None
+            claim_subject = str(payload.get("oid") or payload.get("sub") or payload.get("upn") or "").strip()
+            return claim_subject or None
         except Exception:
-            return False
+            return None
 
 
 class AdminAuthService:

@@ -48,6 +48,7 @@ Update at minimum:
 - `jwtJwksUrl`
 - `jwtIssuer`
 - `jwtAudience`
+  - Use the Entra API app registration `appId` GUID (the value that appears in bearer token `aud`).
 - `postgresAdminUser`
 - `postgresAdminPassword`
 

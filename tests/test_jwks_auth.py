@@ -106,11 +106,34 @@ def test_tenant_auth_accepts_valid_jwks_token(monkeypatch: pytest.MonkeyPatch) -
     tenant_ctx = TenantAuthService(_settings()).authenticate(
         path_tenant_id="tenant-123",
         x_tenant_id="tenant-123",
-        x_customer_user_id="user-1",
+        x_customer_user_id="tenant-user",
         x_api_key="",
         authorization=f"Bearer {token}",
     )
     assert tenant_ctx.tenant_id == "tenant-123"
+    assert tenant_ctx.customer_user_id == "tenant-user"
+
+
+def test_tenant_auth_rejects_customer_header_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    claims = {
+        "sub": "tenant-user",
+        "iss": "https://login.microsoftonline.com/test-tenant/v2.0",
+        "aud": "api://hosted-agents-saas-platform",
+        "tenant_id": "tenant-123",
+    }
+    token, jwks = _build_rsa_token(claims, kid="kid-tenant-mismatch")
+    _install_mock_jwks(monkeypatch, jwks)
+
+    with pytest.raises(HTTPException) as err:
+        TenantAuthService(_settings()).authenticate(
+            path_tenant_id="tenant-123",
+            x_tenant_id="tenant-123",
+            x_customer_user_id="another-user",
+            x_api_key="",
+            authorization=f"Bearer {token}",
+        )
+    assert err.value.status_code == 403
+    assert err.value.detail == "X-Customer-User-Id must match token subject"
 
 
 def test_jwks_auth_rejects_invalid_audience(monkeypatch: pytest.MonkeyPatch) -> None:

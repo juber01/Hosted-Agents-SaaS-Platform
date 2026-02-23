@@ -218,7 +218,7 @@ def test_plan_admin_and_tenant_quota_enforcement() -> None:
         "X-Tenant-Id": tenant_id,
         "X-Customer-User-Id": "user-1",
         "X-Api-Key": "",
-        "Authorization": f"Bearer {jwt.encode({'tenant_id': tenant_id}, secret, algorithm='HS256')}",
+        "Authorization": f"Bearer {jwt.encode({'tenant_id': tenant_id, 'sub': 'user-1'}, secret, algorithm='HS256')}",
     }
 
     first = client.post(

@@ -9,6 +9,7 @@ This document defines how Microsoft Entra access token claims map to `/v1/admin/
   - `JWT_ISSUER`
   - `JWT_AUDIENCE`
   - `JWT_JWKS_CACHE_TTL_SECONDS` (default 300s)
+- For Entra app-based tokens, set `JWT_AUDIENCE` to the API app registration `appId` (GUID) that appears in the token `aud` claim.
 - `JWT_ALGORITHM` should typically be `RS256` for Entra-issued tokens.
 - Shared-secret JWT mode is available as a fallback for non-production transitions.
 
