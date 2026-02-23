@@ -46,6 +46,7 @@ class Settings:
     postgres_max_overflow: int = 0
     postgres_pool_timeout_seconds: int = 10
     postgres_pool_recycle_seconds: int = 900
+    foundry_run_poll_interval_seconds: int = 1
 
 
 def _parse_tenant_api_keys(raw: str) -> dict[str, str]:
@@ -107,6 +108,7 @@ def get_settings() -> Settings:
         ),
         azure_ai_project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT", ""),
         azure_ai_project_api_key=os.getenv("AZURE_AI_PROJECT_API_KEY", ""),
+        foundry_run_poll_interval_seconds=max(1, int(os.getenv("FOUNDRY_RUN_POLL_INTERVAL_SECONDS", "1"))),
         azure_use_managed_identity=_parse_bool(os.getenv("AZURE_USE_MANAGED_IDENTITY", "true"), default=True),
         azure_managed_identity_client_id=os.getenv("AZURE_MANAGED_IDENTITY_CLIENT_ID", ""),
         allow_api_key_fallback=_parse_bool(os.getenv("ALLOW_API_KEY_FALLBACK", "false"), default=False),

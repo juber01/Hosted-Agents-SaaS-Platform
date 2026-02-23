@@ -88,6 +88,10 @@ Estimate daily/monthly run-rate from live Azure resource configuration and curre
   - `POSTGRES_MAX_OVERFLOW=0`
   - `POSTGRES_POOL_TIMEOUT_SECONDS=10`
   - `POSTGRES_POOL_RECYCLE_SECONDS=900`
+- Foundry execution:
+  - Set `AZURE_AI_PROJECT_ENDPOINT` to enable live hosted-agent execution.
+  - `POST /v1/tenants/{tenant_id}/runs` uses `agent_id` as the Foundry agent id.
+  - `FOUNDRY_RUN_POLL_INTERVAL_SECONDS` controls run polling interval.
 - Run execution is enforced by plan quotas (monthly messages and monthly token cap).
 - Provisioning jobs support idempotency keys, retry backoff, and dead-letter state.
 - `PROVISIONING_QUEUE_BACKEND=database` uses only Postgres/in-memory queue state.
